@@ -32,6 +32,15 @@ send_facts_to_cloud = false
 [tools]
 model_calls = true
 
+[search]
+provider = "duckduckgo"
+backend = "duckduckgo"
+use_library = true
+allow_model_calls = false
+base_url = "https://html.duckduckgo.com/html/"
+timeout = 15
+max_results = 5
+
 [security]
 allowed_apps = ["alacritty", "chromium", "code", "dolphin", "firefox", "kitty", "spotify", "telegram-desktop", "thunar"]
 confirm_app_launch = true

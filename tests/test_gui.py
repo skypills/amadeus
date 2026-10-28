@@ -39,7 +39,13 @@ class FakeAssistant:
         self.session_id = session_id
         return True
 
-    def respond(self, text: str, stream: bool = True, on_chunk=None) -> str:
+    def respond(
+        self,
+        text: str,
+        stream: bool = True,
+        on_chunk=None,
+        external_context: str = "",
+    ) -> str:
         if self.error is not None:
             raise self.error
         for part in self.answer:
@@ -181,3 +187,40 @@ def test_main_window_smoke(qapp, settings, tmp_path):
     assert "Микрофон" in window.mic_label.text()
     window.close()
     assistant.close()
+
+
+def test_chat_worker_web_search_passes_sources(qapp, settings, tmp_path, monkeypatch):
+    from amadeus.tools import SearchResult
+
+    class FakeSearch:
+        def search(self, query):
+            return [SearchResult("T", "https://example.com", "S", "")]
+
+    monkeypatch.setattr(
+        "amadeus.ui.window.WebSearch.from_settings",
+        lambda settings: FakeSearch(),
+    )
+    fake = FakeAssistant(answer="ответ")
+    captured = {}
+
+    def respond(text, stream=True, on_chunk=None, external_context=""):
+        captured["context"] = external_context
+        if on_chunk:
+            on_chunk("ответ")
+        return "ответ"
+
+    fake.respond = respond
+    worker = ChatWorker(
+        settings,
+        1,
+        "запрос",
+        tmp_path / "persona.md",
+        assistant_factory=lambda: fake,
+        web_query=True,
+    )
+    sources = []
+    worker.sources.connect(sources.append)
+    worker.run()
+    assert sources[0][0].url == "https://example.com"
+    assert "https://example.com" in captured["context"]
+    assert "НЕДОВЕРЕННЫЕ" in captured["context"]

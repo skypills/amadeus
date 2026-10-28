@@ -16,7 +16,7 @@ from .providers import OllamaProvider
 from .security import PermissionDenied
 from .settings import DEFAULT_PERSONA, ConfigError, Settings, dump_toml
 from .storage import paths
-from .tools import ToolError
+from .tools import ToolError, WebSearch, WebSearchError, render_results, render_sources
 from .voice import VoiceError, VoicePipeline
 
 try:
@@ -57,6 +57,7 @@ HELP_TEXT = """\
   /sysinfo                  системная информация
   /notify <текст>           отправить уведомление
   /open <app> [аргументы]   запустить приложение из allowlist
+  /web <запрос>             поиск в интернете и ответ по источникам
   /character [reset]        показать или сбросить характер
   /reset                    сбросить настроение и параметры стиля
   /persona [edit|reset]     показать, изменить или сбросить persona.md
@@ -103,6 +104,7 @@ class ChatCLI:
         self.events.subscribe(_print_event)
         self.running = True
         self.voice = VoicePipeline(settings)
+        self.web = WebSearch.from_settings(settings)
 
     def run(self) -> int:
         self._print_banner()
@@ -142,7 +144,7 @@ class ChatCLI:
             print(f"Ожидают подтверждения фактов: {pending}. Список: /fact pending")
         print()
 
-    def _handle_message(self, text: str) -> str | None:
+    def _handle_message(self, text: str, external_context: str = "") -> str | None:
         stream = bool(self.settings.get("ollama.stream", True))
         printed = False
 
@@ -154,7 +156,12 @@ class ChatCLI:
             print(chunk, end="", flush=True)
 
         try:
-            answer = self.assistant.respond(text, stream=stream, on_chunk=on_chunk)
+            answer = self.assistant.respond(
+                text,
+                stream=stream,
+                on_chunk=on_chunk,
+                external_context=external_context,
+            )
         except AssistantError as exc:
             if printed:
                 print()
@@ -247,6 +254,7 @@ class ChatCLI:
             "/sysinfo": self._cmd_sysinfo,
             "/notify": self._cmd_notify,
             "/open": self._cmd_open,
+            "/web": self._cmd_web,
             "/reset": self._cmd_reset,
             "/persona": self._cmd_persona,
             "/settings": self._cmd_settings,
@@ -585,6 +593,20 @@ class ChatCLI:
             confirmed=True,
         )
         print(result)
+
+    def _cmd_web(self, args: list[str]) -> None:
+        query = " ".join(args).strip()
+        if not query:
+            raise ValueError("Использование: /web <запрос>")
+        print("Ищу в интернете…", flush=True)
+        try:
+            results = self.web.search(query)
+        except WebSearchError as exc:
+            print(f"Веб-поиск: {exc}", file=sys.stderr)
+            return
+        print(render_sources(results))
+        print()
+        self._handle_message(query, external_context=render_results(results))
 
     def _cmd_voice(self, args: list[str]) -> None:
         action = args[0].lower() if args else "status"

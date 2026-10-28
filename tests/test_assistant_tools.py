@@ -163,3 +163,31 @@ def test_provider_without_tool_support_falls_back_to_plain_chat(tmp_path, settin
     assert provider.plain_used
     assert any(event.kind == "tool" for event in events)
     assistant.close()
+
+
+def test_model_cannot_call_tool_with_allow_model_false(tmp_path, settings):
+    executed: list[dict[str, object]] = []
+    registry = ToolRegistry()
+    registry.register(
+        Tool(
+            name="web_search",
+            description="web",
+            risk="low",
+            handler=lambda arguments: executed.append(arguments) or "SOURCES",
+            allow_model=False,
+        )
+    )
+    registry.register(
+        Tool(name="system_info", description="info", risk="low", handler=lambda args: "SYS")
+    )
+    assistant = make_assistant(tmp_path, settings, registry)
+    provider = ToolProvider([ToolCall("1", "web_search", {"query": "test"})])
+    assistant.router.selected = lambda: provider
+    assistant.router.can_fallback = lambda: False
+
+    assistant.respond("Найди в интернете")
+
+    assert executed == []
+    tool_message = next(m for m in provider.messages if m.get("role") == "tool")
+    assert "не разрешён" in str(tool_message["content"])
+    assistant.close()

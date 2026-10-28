@@ -34,7 +34,7 @@ from ..memory import Database
 from ..security import PermissionDenied
 from ..settings import ConfigError, Settings
 from ..storage import paths
-from ..tools import ToolError
+from ..tools import ToolError, WebSearch, render_results, render_sources
 from ..voice import VoiceError, VoicePipeline
 from .chat import ChatInput, ChatView, MessageBubble
 from .settings import SettingsDialog
@@ -48,6 +48,7 @@ class GenerationCancelled(Exception):
 
 class ChatWorker(QThread):
     chunk = Signal(str)
+    sources = Signal(object)
     finished_text = Signal(str)
     failed = Signal(str)
     cancelled = Signal()
@@ -60,12 +61,14 @@ class ChatWorker(QThread):
         text: str,
         persona_path: Path,
         assistant_factory=None,
+        web_query: bool = False,
     ) -> None:
         super().__init__()
         self.settings = settings
         self.session_id = session_id
         self.text = text
         self.persona_path = persona_path
+        self.web_query = web_query
         self._assistant_factory = assistant_factory
         self._cancel = threading.Event()
 
@@ -88,13 +91,24 @@ class ChatWorker(QThread):
             if not assistant.resume(self.session_id):
                 raise RuntimeError("Текущая сессия не найдена.")
             stream = bool(self.settings.get("ollama.stream", True))
+            external_context = ""
+            if self.web_query:
+                search = WebSearch.from_settings(self.settings)
+                results = search.search(self.text)
+                self.sources.emit(results)
+                external_context = render_results(results)
 
             def on_chunk(text: str) -> None:
                 if self._cancel.is_set():
                     raise GenerationCancelled
                 self.chunk.emit(text)
 
-            answer = assistant.respond(self.text, stream=stream, on_chunk=on_chunk)
+            answer = assistant.respond(
+                self.text,
+                stream=stream,
+                on_chunk=on_chunk,
+                external_context=external_context,
+            )
             if self._cancel.is_set():
                 self.cancelled.emit()
                 return
@@ -332,6 +346,10 @@ class MainWindow(QMainWindow):
         notify_action.triggered.connect(self._send_notification_dialog)
         open_action = QAction("Запустить приложение…", self)
         open_action.triggered.connect(self._launch_application_dialog)
+        web_action = QAction("Веб-поиск…", self)
+        web_action.triggered.connect(self._web_search)
+        tools_menu.addAction(web_action)
+        tools_menu.addSeparator()
         tools_menu.addAction(sysinfo_action)
         tools_menu.addAction(notify_action)
         tools_menu.addAction(open_action)
@@ -385,20 +403,33 @@ class MainWindow(QMainWindow):
         if not text:
             return
         self.input.clear()
+        self._start_generation(text, web_query=False)
+
+    def _web_search(self) -> None:
+        if self._busy or (self._worker is not None and self._worker.isRunning()):
+            return
+        query, ok = QInputDialog.getText(self, "Веб-поиск", "Поисковый запрос:")
+        if not ok or not query.strip():
+            return
+        self._start_generation(query.strip(), web_query=True)
+
+    def _start_generation(self, text: str, web_query: bool) -> None:
         self._last_user_text = text
         self.chat.add_message("user", text)
         self._stream_bubble = self.chat.add_message("assistant", "…")
         self._stream_text = ""
         self._set_busy(True)
-        self.statusBar().showMessage("Генерация…")
+        self.statusBar().showMessage("Поиск в интернете…" if web_query else "Генерация…")
 
         worker = ChatWorker(
             self.settings,
             self.assistant.session_id,
             text,
             self.assistant.persona_path,
+            web_query=web_query,
         )
         worker.chunk.connect(self._on_chunk)
+        worker.sources.connect(self._on_web_sources)
         worker.finished_text.connect(self._on_finished)
         worker.failed.connect(self._on_failed)
         worker.cancelled.connect(self._on_cancelled)
@@ -406,6 +437,16 @@ class MainWindow(QMainWindow):
         worker.finished.connect(lambda: self._on_worker_finished(worker))
         self._worker = worker
         worker.start()
+
+    def _on_web_sources(self, results: object) -> None:
+        items = list(results) if isinstance(results, list) else []
+        if not items:
+            return
+        self.chat.add_message(
+            "tool",
+            "Источники из интернета (недоверенные данные):\n\n" + render_sources(items),
+        )
+        self.statusBar().showMessage(f"Найдено источников: {len(items)}", 8000)
 
     def _stop_generation(self) -> None:
         if self._worker is None:

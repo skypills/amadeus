@@ -43,6 +43,15 @@ DEFAULT_SETTINGS: dict[str, dict[str, Any]] = {
     "tools": {
         "model_calls": True,
     },
+    "search": {
+        "provider": "duckduckgo",
+        "backend": "duckduckgo",
+        "use_library": True,
+        "allow_model_calls": False,
+        "base_url": "https://html.duckduckgo.com/html/",
+        "timeout": 15,
+        "max_results": 5,
+    },
     "security": {
         "allowed_apps": [
             "alacritty",

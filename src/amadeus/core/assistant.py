@@ -126,7 +126,9 @@ class Assistant:
             )
         return history, context
 
-    def _build_request(self, user_text: str, provider_name: str) -> list[dict[str, str]]:
+    def _build_request(
+        self, user_text: str, provider_name: str, external_context: str = ""
+    ) -> list[dict[str, str]]:
         history, memory = self._memory_context(user_text, provider_name)
         mood = load_mood(self.settings)
         persona = load_persona(self.persona_path)
@@ -137,11 +139,21 @@ class Assistant:
             mood=mood,
             cloud=provider_name == "cloud",
         )
-        return build_messages(system_prompt, history, memory_block=memory_block)
+        return build_messages(
+            system_prompt,
+            history,
+            memory_block=memory_block,
+            external_context=external_context,
+        )
 
     def _execute_tool_call(self, call: ToolCall) -> str:
         try:
             tool = self.tools.get(call.name)
+            if not tool.allow_model:
+                return (
+                    f"Ошибка безопасности: инструмент «{call.name}» не разрешён "
+                    "для автоматического вызова моделью."
+                )
             if tool.risk != "low" or tool.requires_confirmation:
                 return (
                     f"Ошибка безопасности: инструмент «{call.name}» требует "
@@ -189,6 +201,7 @@ class Assistant:
         user_text: str,
         stream: bool = True,
         on_chunk: ChunkCallback | None = None,
+        external_context: str = "",
     ) -> str:
         user_text = user_text.strip()
         if not user_text:
@@ -204,7 +217,7 @@ class Assistant:
         if provider.name == "cloud":
             self._notify_cloud()
 
-        messages = self._build_request(user_text, provider.name)
+        messages = self._build_request(user_text, provider.name, external_context)
         produced: list[str] = []
 
         def emit(chunk: str) -> None:
@@ -223,7 +236,7 @@ class Assistant:
                 )
                 cloud = self.router.cloud_provider()
                 self._notify_cloud()
-                cloud_messages = self._build_request(user_text, "cloud")
+                cloud_messages = self._build_request(user_text, "cloud", external_context)
                 try:
                     answer = self._chat(cloud, cloud_messages, stream, emit)
                 except ProviderError as cloud_exc:

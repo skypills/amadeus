@@ -6,6 +6,7 @@ from .applications import application_tool
 from .notifications import notification_tool
 from .registry import ToolRegistry
 from .system_info import system_info_tool
+from .web_search import web_search_tool
 
 
 def build_registry(settings: Settings | None = None) -> ToolRegistry:
@@ -24,4 +25,5 @@ def build_registry(settings: Settings | None = None) -> ToolRegistry:
     registry.register(notification_tool())
     registry.register(application_tool(policy))
     registry.register(system_info_tool())
+    registry.register(web_search_tool(settings))
     return registry

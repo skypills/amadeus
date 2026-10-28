@@ -25,6 +25,7 @@ class Tool:
     handler: Callable[[dict[str, object]], str]
     requires_confirmation: bool = False
     parameters: dict[str, object] | None = None
+    allow_model: bool = True
 
 
 class ToolRegistry:
@@ -45,7 +46,9 @@ class ToolRegistry:
 
     def model_tools(self) -> list[Tool]:
         return [
-            tool for tool in self.all() if tool.risk == "low" and not tool.requires_confirmation
+            tool
+            for tool in self.all()
+            if tool.risk == "low" and not tool.requires_confirmation and tool.allow_model
         ]
 
     def model_specs(self) -> list[dict[str, object]]:

@@ -232,3 +232,20 @@ def test_export_from_assistant(tmp_path, settings):
     assert payload["sessions"][0]["messages"][0]["content"] == "Привет"
     assert payload["facts"][0]["content"] == "Факт для экспорта"
     assistant.close()
+
+
+def test_external_context_is_marked_untrusted(tmp_path, settings):
+    assistant = make_assistant(tmp_path, settings)
+    fake = FakeProvider(answer="Ответ")
+    assistant.router.selected = lambda: fake
+    assistant.router.can_fallback = lambda: False
+    assistant.respond(
+        "Что нового?",
+        external_context="НЕДОВЕРЕННЫЕ ИСТОЧНИКИ\nhttps://example.com",
+    )
+    system = fake.messages[0]["content"]
+    external = fake.messages[-2]["content"]
+    assert "НЕДОВЕРЕННЫЕ ИСТОЧНИКИ" in external
+    assert "https://example.com" in external
+    assert "недоверен" not in system.lower() or "интернет" in system.lower()
+    assistant.close()

@@ -63,6 +63,10 @@ class SettingsDialog(QDialog):
         self.provider_combo.setCurrentText(str(self.settings.get("provider.name", "ollama")))
         self.allow_cloud_check = QCheckBox("Разрешить облачный режим")
         self.allow_cloud_check.setChecked(bool(self.settings.get("provider.allow_cloud", False)))
+        self.cloud_fallback_check = QCheckBox("Резерв на облако при ошибке Ollama")
+        self.cloud_fallback_check.setChecked(
+            bool(self.settings.get("provider.cloud_fallback", True))
+        )
         self.cloud_url_edit = QLineEdit(str(self.settings.get("provider.cloud_base_url")))
         self.cloud_model_edit = QLineEdit(str(self.settings.get("provider.cloud_model")))
         self.cloud_key_env_edit = QLineEdit(str(self.settings.get("provider.cloud_api_key_env")))
@@ -75,6 +79,7 @@ class SettingsDialog(QDialog):
         form.addRow("", self.stream_check)
         form.addRow("Провайдер:", self.provider_combo)
         form.addRow("", self.allow_cloud_check)
+        form.addRow("", self.cloud_fallback_check)
         form.addRow("Cloud URL:", self.cloud_url_edit)
         form.addRow("Cloud модель:", self.cloud_model_edit)
         form.addRow("Переменная ключа:", self.cloud_key_env_edit)
@@ -191,6 +196,7 @@ class SettingsDialog(QDialog):
             "ollama.stream": self.stream_check.isChecked(),
             "provider.name": provider,
             "provider.allow_cloud": allow_cloud,
+            "provider.cloud_fallback": self.cloud_fallback_check.isChecked(),
             "provider.cloud_base_url": self.cloud_url_edit.text().strip(),
             "provider.cloud_model": self.cloud_model_edit.text().strip(),
             "provider.cloud_api_key_env": self.cloud_key_env_edit.text().strip(),
