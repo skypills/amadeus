@@ -4,6 +4,7 @@ import json
 import os
 import urllib.error
 import urllib.request
+from collections.abc import Sequence
 
 from .base import (
     ChunkCallback,
@@ -12,11 +13,14 @@ from .base import (
     ProviderConnectionError,
     ProviderError,
     ProviderStatus,
+    ToolCall,
+    ToolChatResult,
 )
 
 
 class CloudProvider(Provider):
     name = "cloud"
+    supports_tools = True
 
     def __init__(
         self,
@@ -132,3 +136,140 @@ class CloudProvider(Provider):
                     if on_chunk is not None:
                         on_chunk(content)
         return "".join(parts)
+
+    def chat_tools(
+        self,
+        messages: Messages,
+        tools: list[dict[str, object]],
+        on_chunk: ChunkCallback | None = None,
+    ) -> ToolChatResult:
+        key = self.api_key()
+        if not key:
+            raise ProviderError(
+                f"Облачный режим включён, но ключ не найден. "
+                f"Задайте переменную окружения {self.api_key_env}."
+            )
+        payload = {
+            "model": self.model,
+            "messages": list(messages),
+            "stream": True,
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "max_tokens": self.max_tokens,
+            "tools": tools,
+        }
+        request = urllib.request.Request(
+            f"{self.base_url}/chat/completions",
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {key}",
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            response = urllib.request.urlopen(request, timeout=self.timeout)
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")
+            raise ProviderConnectionError(
+                f"Облачный провайдер вернул HTTP {exc.code}: {body[:300]}"
+            ) from exc
+        except (urllib.error.URLError, TimeoutError, ConnectionError, OSError) as exc:
+            reason = getattr(exc, "reason", exc)
+            raise ProviderConnectionError(f"Облачный провайдер недоступен: {reason}") from exc
+
+        parts: list[str] = []
+        calls: dict[int, dict[str, str]] = {}
+        with response:
+            for raw_line in response:
+                line = raw_line.decode("utf-8", errors="replace").strip()
+                if not line or not line.startswith("data:"):
+                    continue
+                chunk = line[5:].strip()
+                if chunk == "[DONE]":
+                    break
+                try:
+                    data = json.loads(chunk)
+                except json.JSONDecodeError as exc:
+                    raise ProviderError(
+                        "Облачный провайдер вернул некорректный поток данных."
+                    ) from exc
+                if "error" in data:
+                    raise ProviderError(f"Облачный провайдер: {data['error']}")
+                choices = data.get("choices") or []
+                if not choices:
+                    continue
+                delta = choices[0].get("delta") or {}
+                content = str(delta.get("content") or "")
+                if content:
+                    parts.append(content)
+                    if on_chunk is not None:
+                        on_chunk(content)
+                for item in delta.get("tool_calls") or []:
+                    if not isinstance(item, dict):
+                        continue
+                    try:
+                        index = int(item.get("index", 0))
+                    except (TypeError, ValueError):
+                        index = 0
+                    entry = calls.setdefault(index, {"id": "", "name": "", "arguments": ""})
+                    if item.get("id"):
+                        entry["id"] = str(item["id"])
+                    function = item.get("function") or {}
+                    if isinstance(function, dict):
+                        entry["name"] += str(function.get("name") or "")
+                        entry["arguments"] += str(function.get("arguments") or "")
+        tool_calls: list[ToolCall] = []
+        for index in sorted(calls):
+            entry = calls[index]
+            name = entry["name"].strip()
+            if not name:
+                continue
+            try:
+                arguments = json.loads(entry["arguments"] or "{}")
+            except json.JSONDecodeError:
+                arguments = {}
+            if not isinstance(arguments, dict):
+                arguments = {}
+            tool_calls.append(
+                ToolCall(
+                    id=entry["id"] or f"cloud-{index}",
+                    name=name,
+                    arguments=arguments,
+                )
+            )
+        return ToolChatResult(text="".join(parts), tool_calls=tuple(tool_calls))
+
+    def format_tool_messages(
+        self,
+        result: ToolChatResult,
+        executed: Sequence[tuple[ToolCall, str]],
+    ) -> list[dict[str, object]]:
+        tool_calls = [
+            {
+                "id": call.id,
+                "type": "function",
+                "function": {
+                    "name": call.name,
+                    "arguments": json.dumps(call.arguments, ensure_ascii=False),
+                },
+            }
+            for call, _ in executed
+        ]
+        messages: list[dict[str, object]] = [
+            {
+                "role": "assistant",
+                "content": result.text or None,
+                "tool_calls": tool_calls,
+            }
+        ]
+        messages.extend(
+            {
+                "role": "tool",
+                "tool_call_id": call.id,
+                "content": content,
+            }
+            for call, content in executed
+        )
+        return messages

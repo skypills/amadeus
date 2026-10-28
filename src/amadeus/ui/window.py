@@ -31,8 +31,10 @@ from .. import __version__
 from ..core.assistant import Assistant
 from ..core.events import EventBus
 from ..memory import Database
+from ..security import PermissionDenied
 from ..settings import ConfigError, Settings
 from ..storage import paths
+from ..tools import ToolError
 from ..voice import VoiceError, VoicePipeline
 from .chat import ChatInput, ChatView, MessageBubble
 from .settings import SettingsDialog
@@ -322,6 +324,17 @@ class MainWindow(QMainWindow):
         file_menu.addAction(delete_all_action)
         file_menu.addSeparator()
         file_menu.addAction(quit_action)
+
+        tools_menu = self.menuBar().addMenu("Инструменты")
+        sysinfo_action = QAction("Системная информация", self)
+        sysinfo_action.triggered.connect(self._show_system_info)
+        notify_action = QAction("Уведомление…", self)
+        notify_action.triggered.connect(self._send_notification_dialog)
+        open_action = QAction("Запустить приложение…", self)
+        open_action.triggered.connect(self._launch_application_dialog)
+        tools_menu.addAction(sysinfo_action)
+        tools_menu.addAction(notify_action)
+        tools_menu.addAction(open_action)
 
         settings_menu = self.menuBar().addMenu("Настройки")
         prefs_action = QAction("Параметры…", self)
@@ -839,6 +852,56 @@ class MainWindow(QMainWindow):
             self.cloud_label.setText("Провайдер: локальный (облако разрешено)")
         else:
             self.cloud_label.setText("Провайдер: локальный")
+
+    def _show_system_info(self) -> None:
+        try:
+            result = self.assistant.tools.execute("system_info", {}, confirmed=True)
+        except (ToolError, PermissionDenied, OSError) as exc:
+            QMessageBox.critical(self, "Системная информация", str(exc))
+            return
+        box = QMessageBox(self)
+        box.setWindowTitle("Системная информация")
+        box.setText(result)
+        box.exec()
+
+    def _send_notification_dialog(self) -> None:
+        text, ok = QInputDialog.getMultiLineText(self, "Уведомление", "Текст уведомления:")
+        if not ok or not text.strip():
+            return
+        try:
+            result = self.assistant.tools.execute(
+                "send_notification",
+                {"title": "Amadeus", "text": text},
+                confirmed=True,
+            )
+        except (ToolError, PermissionDenied, OSError) as exc:
+            QMessageBox.critical(self, "Уведомление", str(exc))
+            return
+        self.statusBar().showMessage(result, 8000)
+
+    def _launch_application_dialog(self) -> None:
+        apps = sorted(self.assistant.tools.policy.allowed_apps)
+        if not apps:
+            QMessageBox.warning(self, "Приложения", "Allowlist приложений пуст.")
+            return
+        app, ok = QInputDialog.getItem(self, "Запуск приложения", "Приложение:", apps, 0, False)
+        if not ok or not app:
+            return
+        tool = self.assistant.tools.get("launch_application")
+        if tool.requires_confirmation:
+            answer = QMessageBox.question(self, "Запуск приложения", f"Запустить «{app}»?")
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        try:
+            result = self.assistant.tools.execute(
+                "launch_application",
+                {"app": app, "args": []},
+                confirmed=True,
+            )
+        except (ToolError, PermissionDenied, OSError) as exc:
+            QMessageBox.critical(self, "Приложения", str(exc))
+            return
+        self.statusBar().showMessage(result, 8000)
 
     def _open_settings(self) -> None:
         if self.voice.recording:

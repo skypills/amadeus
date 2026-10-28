@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
+from collections.abc import Sequence
 
 from .base import (
     ChunkCallback,
@@ -11,11 +12,14 @@ from .base import (
     ProviderConnectionError,
     ProviderError,
     ProviderStatus,
+    ToolCall,
+    ToolChatResult,
 )
 
 
 class OllamaProvider(Provider):
     name = "ollama"
+    supports_tools = True
 
     def __init__(
         self,
@@ -132,3 +136,93 @@ class OllamaProvider(Provider):
                 if data.get("done"):
                     break
         return "".join(parts)
+
+    def _tool_call(self, item: object, index: int) -> ToolCall | None:
+        if not isinstance(item, dict):
+            return None
+        function = item.get("function") or {}
+        if not isinstance(function, dict):
+            return None
+        name = str(function.get("name") or "").strip()
+        if not name:
+            return None
+        arguments = function.get("arguments")
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except json.JSONDecodeError:
+                arguments = {}
+        if not isinstance(arguments, dict):
+            arguments = {}
+        call_id = str(item.get("id") or f"ollama-{index}")
+        return ToolCall(id=call_id, name=name, arguments=arguments)
+
+    def chat_tools(
+        self,
+        messages: Messages,
+        tools: list[dict[str, object]],
+        on_chunk: ChunkCallback | None = None,
+    ) -> ToolChatResult:
+        payload = {
+            "model": self.model,
+            "messages": list(messages),
+            "stream": True,
+            "tools": tools,
+            "options": {
+                "temperature": self.temperature,
+                "top_p": self.top_p,
+                "num_predict": self.max_tokens,
+            },
+        }
+        response = self._request("/api/chat", payload)
+        parts: list[str] = []
+        calls: list[ToolCall] = []
+        with response:
+            for raw_line in response:
+                line = raw_line.decode("utf-8", errors="replace").strip()
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    raise ProviderError("Ollama вернула некорректный поток данных.") from exc
+                if error := data.get("error"):
+                    raise ProviderError(f"Ollama: {error}")
+                message = data.get("message") or {}
+                if not isinstance(message, dict):
+                    message = {}
+                content = str(message.get("content") or "")
+                if content:
+                    parts.append(content)
+                    if on_chunk is not None:
+                        on_chunk(content)
+                for item in message.get("tool_calls") or []:
+                    call = self._tool_call(item, len(calls))
+                    if call is not None:
+                        calls.append(call)
+                if data.get("done"):
+                    break
+        return ToolChatResult(text="".join(parts), tool_calls=tuple(calls))
+
+    def format_tool_messages(
+        self,
+        result: ToolChatResult,
+        executed: Sequence[tuple[ToolCall, str]],
+    ) -> list[dict[str, object]]:
+        tool_calls = [
+            {
+                "function": {
+                    "name": call.name,
+                    "arguments": call.arguments,
+                }
+            }
+            for call, _ in executed
+        ]
+        messages: list[dict[str, object]] = [
+            {"role": "assistant", "content": result.text, "tool_calls": tool_calls}
+        ]
+        messages.extend(
+            {"role": "tool", "content": content, "tool_name": call.name}
+            for call, content in executed
+        )
+        return messages

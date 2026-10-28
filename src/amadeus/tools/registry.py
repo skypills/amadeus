@@ -10,6 +10,13 @@ class ToolError(RuntimeError):
     pass
 
 
+EMPTY_PARAMETERS: dict[str, object] = {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": False,
+}
+
+
 @dataclass(frozen=True)
 class Tool:
     name: str
@@ -17,6 +24,7 @@ class Tool:
     risk: str
     handler: Callable[[dict[str, object]], str]
     requires_confirmation: bool = False
+    parameters: dict[str, object] | None = None
 
 
 class ToolRegistry:
@@ -31,6 +39,27 @@ class ToolRegistry:
 
     def names(self) -> list[str]:
         return sorted(self._tools)
+
+    def all(self) -> list[Tool]:
+        return [self._tools[name] for name in self.names()]
+
+    def model_tools(self) -> list[Tool]:
+        return [
+            tool for tool in self.all() if tool.risk == "low" and not tool.requires_confirmation
+        ]
+
+    def model_specs(self) -> list[dict[str, object]]:
+        return [
+            {
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.parameters or EMPTY_PARAMETERS,
+                },
+            }
+            for tool in self.model_tools()
+        ]
 
     def get(self, name: str) -> Tool:
         try:

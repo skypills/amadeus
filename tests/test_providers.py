@@ -132,3 +132,84 @@ def test_cloud_http_error(monkeypatch):
 def test_status_dataclass_defaults():
     status = ProviderStatus(True, "ok")
     assert status.models == ()
+
+
+def test_ollama_parses_tool_calls(monkeypatch):
+    payloads = [
+        json.dumps(
+            {
+                "message": {
+                    "content": "",
+                    "tool_calls": [{"function": {"name": "system_info", "arguments": {}}}],
+                }
+            }
+        ),
+        json.dumps(
+            {
+                "message": {
+                    "content": "",
+                    "tool_calls": [
+                        {
+                            "id": "call-2",
+                            "function": {
+                                "name": "send_notification",
+                                "arguments": '{"text": "привет"}',
+                            },
+                        }
+                    ],
+                },
+                "done": True,
+            }
+        ),
+    ]
+    provider = OllamaProvider()
+    monkeypatch.setattr(
+        provider, "_request", lambda path, payload=None, **kwargs: FakeResponse(payloads)
+    )
+    result = provider.chat_tools([{"role": "user", "content": "hi"}], [])
+    assert result.text == ""
+    assert [call.name for call in result.tool_calls] == [
+        "system_info",
+        "send_notification",
+    ]
+    assert result.tool_calls[1].arguments == {"text": "привет"}
+    messages = provider.format_tool_messages(
+        result, list(zip(result.tool_calls, ["ok", "sent"], strict=True))
+    )
+    assert messages[0]["role"] == "assistant"
+    assert messages[1] == {"role": "tool", "content": "ok", "tool_name": "system_info"}
+
+
+def test_cloud_parses_streamed_tool_calls(monkeypatch):
+    monkeypatch.setenv("AMADEUS_TEST_KEY", "secret")
+    payloads = [
+        'data: {"choices": [{"delta": {"content": "Сейчас"}}]}',
+        'data: {"choices": [{"delta": {"tool_calls": [{"index": 0, "id": "call_1", '
+        '"function": {"name": "system_info", "arguments": "{\\"x\\""}}]}}]}',
+        'data: {"choices": [{"delta": {"tool_calls": [{"index": 0, '
+        '"function": {"arguments": ": 1}"}}]}}]}',
+        "data: [DONE]",
+    ]
+    provider = CloudProvider(api_key_env="AMADEUS_TEST_KEY")
+
+    class FakeUrlopen:
+        def __call__(self, request, timeout):
+            return FakeResponse(payloads)
+
+    monkeypatch.setattr("urllib.request.urlopen", FakeUrlopen())
+    chunks: list[str] = []
+    result = provider.chat_tools(
+        [{"role": "user", "content": "hi"}],
+        [],
+        on_chunk=chunks.append,
+    )
+    assert result.text == "Сейчас"
+    assert chunks == ["Сейчас"]
+    assert len(result.tool_calls) == 1
+    call = result.tool_calls[0]
+    assert call.id == "call_1"
+    assert call.name == "system_info"
+    assert call.arguments == {"x": 1}
+    messages = provider.format_tool_messages(result, [(call, "ok")])
+    assert messages[0]["tool_calls"][0]["id"] == "call_1"
+    assert messages[1]["tool_call_id"] == "call_1"

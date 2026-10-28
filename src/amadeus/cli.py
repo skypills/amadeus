@@ -13,8 +13,10 @@ from .core.events import Event
 from .memory import Database, FactProposal
 from .personality import MOODS, load_mood, reset_mood, set_mood, set_parameter
 from .providers import OllamaProvider
+from .security import PermissionDenied
 from .settings import DEFAULT_PERSONA, ConfigError, Settings, dump_toml
 from .storage import paths
+from .tools import ToolError
 from .voice import VoiceError, VoicePipeline
 
 try:
@@ -51,6 +53,10 @@ HELP_TEXT = """\
   /voice [status|stop]      состояние голосовых компонентов / стоп озвучки
   /listen [секунды]         записать, распознать и отправить (если auto_send)
   /say <текст>              озвучить текст локальным TTS
+  /tools                    список разрешённых инструментов
+  /sysinfo                  системная информация
+  /notify <текст>           отправить уведомление
+  /open <app> [аргументы]   запустить приложение из allowlist
   /character [reset]        показать или сбросить характер
   /reset                    сбросить настроение и параметры стиля
   /persona [edit|reset]     показать, изменить или сбросить persona.md
@@ -63,7 +69,7 @@ HELP_TEXT = """\
 
 def _print_event(event: Event) -> None:
     stream = sys.stderr
-    if event.kind in ("cloud", "fallback"):
+    if event.kind in ("cloud", "fallback", "tool"):
         print(f"\n[Amadeus] {event.message}", file=stream, flush=True)
 
 
@@ -237,6 +243,10 @@ class ChatCLI:
             "/voice": self._cmd_voice,
             "/listen": self._cmd_listen,
             "/say": self._cmd_say,
+            "/tools": self._cmd_tools,
+            "/sysinfo": self._cmd_sysinfo,
+            "/notify": self._cmd_notify,
+            "/open": self._cmd_open,
             "/reset": self._cmd_reset,
             "/persona": self._cmd_persona,
             "/settings": self._cmd_settings,
@@ -250,7 +260,7 @@ class ChatCLI:
             return
         try:
             handler(args)
-        except (ValueError, ConfigError) as exc:
+        except (ValueError, ConfigError, ToolError, PermissionDenied, OSError) as exc:
             print(f"Ошибка: {exc}", file=sys.stderr)
 
     def _cmd_help(self, args: list[str]) -> None:
@@ -541,6 +551,40 @@ class ChatCLI:
         )
         print(f"Персона: {self.assistant.persona_path}")
         print("Изменить: /mood <имя>, /tone <параметр> <0..1>, /persona edit")
+
+    def _cmd_tools(self, args: list[str]) -> None:
+        for tool in self.assistant.tools.all():
+            confirm = " (нужно подтверждение)" if tool.requires_confirmation else ""
+            print(f"{tool.name:<20} риск={tool.risk:<6}{confirm} — {tool.description}")
+
+    def _cmd_sysinfo(self, args: list[str]) -> None:
+        print(self.assistant.tools.execute("system_info", {}, confirmed=True))
+
+    def _cmd_notify(self, args: list[str]) -> None:
+        text = " ".join(args).strip()
+        if not text:
+            raise ValueError("Использование: /notify <текст>")
+        result = self.assistant.tools.execute(
+            "send_notification",
+            {"title": "Amadeus", "text": text},
+            confirmed=True,
+        )
+        print(result)
+
+    def _cmd_open(self, args: list[str]) -> None:
+        if not args:
+            raise ValueError("Использование: /open <app> [аргументы]")
+        app = args[0]
+        tool = self.assistant.tools.get("launch_application")
+        if tool.requires_confirmation and not _confirm(f"Запустить «{app}»?"):
+            print("Отменено.")
+            return
+        result = self.assistant.tools.execute(
+            "launch_application",
+            {"app": app, "args": args[1:]},
+            confirmed=True,
+        )
+        print(result)
 
     def _cmd_voice(self, args: list[str]) -> None:
         action = args[0].lower() if args else "status"

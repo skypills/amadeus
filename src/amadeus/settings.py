@@ -40,6 +40,23 @@ DEFAULT_SETTINGS: dict[str, dict[str, Any]] = {
         "send_history_to_cloud": False,
         "send_facts_to_cloud": False,
     },
+    "tools": {
+        "model_calls": True,
+    },
+    "security": {
+        "allowed_apps": [
+            "alacritty",
+            "chromium",
+            "code",
+            "dolphin",
+            "firefox",
+            "kitty",
+            "spotify",
+            "telegram-desktop",
+            "thunar",
+        ],
+        "confirm_app_launch": True,
+    },
     "voice": {
         "stt_command": "whisper-cli",
         "stt_model": "~/.local/share/amadeus/models/ggml-base.bin",

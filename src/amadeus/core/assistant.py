@@ -18,9 +18,10 @@ from ..memory import (
 from ..memory.history import Message
 from ..personality import build_system_prompt, load_mood, load_persona
 from ..providers import ChunkCallback, ProviderError
-from ..providers.base import ProviderStatus
+from ..providers.base import Provider, ProviderStatus, ToolCall
 from ..settings import Settings
 from ..storage import paths
+from ..tools import ToolRegistry, build_registry
 from .context import build_messages
 from .events import EventBus
 from .router import Router
@@ -37,6 +38,7 @@ class Assistant:
         db: Database | None = None,
         events: EventBus | None = None,
         persona_path: Path | None = None,
+        registry: ToolRegistry | None = None,
     ) -> None:
         self.settings = settings
         self.db = db or Database()
@@ -46,6 +48,7 @@ class Assistant:
         self.proposals = Proposals(self.db, self.facts)
         self.retrieval = Retrieval(self.history, self.facts)
         self.router = Router(settings)
+        self.tools = registry or build_registry(settings)
         self.persona_path = persona_path or paths.persona_path()
         self._session_id: int | None = None
 
@@ -136,6 +139,51 @@ class Assistant:
         )
         return build_messages(system_prompt, history, memory_block=memory_block)
 
+    def _execute_tool_call(self, call: ToolCall) -> str:
+        try:
+            tool = self.tools.get(call.name)
+            if tool.risk != "low" or tool.requires_confirmation:
+                return (
+                    f"Ошибка безопасности: инструмент «{call.name}» требует "
+                    "явного подтверждения пользователя."
+                )
+            output = self.tools.execute(call.name, call.arguments, confirmed=False)
+            self.events.emit("tool", f"Инструмент {call.name}: {output}")
+            return output
+        except Exception as exc:  # noqa: BLE001 - результат уходит модели
+            self.events.emit("tool", f"Инструмент {call.name}: ошибка: {exc}")
+            return f"Ошибка инструмента «{call.name}»: {exc}"
+
+    def _chat(
+        self,
+        provider: Provider,
+        messages: list[dict[str, str]],
+        stream: bool,
+        on_chunk: ChunkCallback | None,
+    ) -> str:
+        specs = self.tools.model_specs()
+        enabled = bool(self.settings.get("tools.model_calls", True))
+        if not enabled or not specs or not getattr(provider, "supports_tools", False):
+            return provider.chat(messages, stream=stream, on_chunk=on_chunk)
+        working: list[dict[str, object]] = list(messages)
+        for round_index in range(3):
+            try:
+                result = provider.chat_tools(working, specs, on_chunk=on_chunk)
+            except ProviderError as exc:
+                message = str(exc).lower()
+                if round_index == 0 and ("tool" in message or "function" in message):
+                    self.events.emit(
+                        "tool",
+                        "Модель не поддерживает вызов инструментов, продолжаю без них.",
+                    )
+                    return provider.chat(messages, stream=stream, on_chunk=on_chunk)
+                raise
+            if not result.tool_calls:
+                return result.text
+            executed = [(call, self._execute_tool_call(call)) for call in result.tool_calls]
+            working.extend(provider.format_tool_messages(result, executed))
+        raise AssistantError("Модель слишком много раз вызывала инструменты.")
+
     def respond(
         self,
         user_text: str,
@@ -165,7 +213,7 @@ class Assistant:
                 on_chunk(chunk)
 
         try:
-            answer = provider.chat(messages, stream=stream, on_chunk=emit)
+            answer = self._chat(provider, messages, stream, emit)
         except ProviderError as exc:
             if provider.name == "ollama" and not produced and self.router.can_fallback():
                 self.events.emit(
@@ -177,7 +225,7 @@ class Assistant:
                 self._notify_cloud()
                 cloud_messages = self._build_request(user_text, "cloud")
                 try:
-                    answer = cloud.chat(cloud_messages, stream=stream, on_chunk=emit)
+                    answer = self._chat(cloud, cloud_messages, stream, emit)
                 except ProviderError as cloud_exc:
                     raise AssistantError(
                         f"Локальная модель недоступна: {exc}. "

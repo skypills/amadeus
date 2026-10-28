@@ -37,6 +37,7 @@ class PermissionDenied(PermissionError):
 @dataclass(frozen=True)
 class PermissionPolicy:
     allowed_apps: frozenset[str] = ALLOWED_APPS
+    confirm_apps: bool = True
     allow_high_risk: bool = False
 
     def is_app_allowed(self, app: str) -> bool:
