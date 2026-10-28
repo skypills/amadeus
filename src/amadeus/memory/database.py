@@ -30,6 +30,13 @@ CREATE TABLE IF NOT EXISTS facts (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS fact_proposals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    content TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'user_request',
+    created_at TEXT NOT NULL
+);
 """
 
 FTS_SCHEMA = """

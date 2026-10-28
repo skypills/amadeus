@@ -144,6 +144,7 @@ class History:
     def delete_all(self) -> None:
         self.conn.execute("DELETE FROM sessions")
         self.conn.execute("DELETE FROM facts")
+        self.conn.execute("DELETE FROM fact_proposals")
         self.conn.commit()
 
     def search(

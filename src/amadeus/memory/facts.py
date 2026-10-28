@@ -7,6 +7,10 @@ from .database import Database
 from .history import _fts_query, _like_query, utc_now
 
 
+def normalize_fact_content(content: str) -> str:
+    return " ".join(content.split()).strip(" .;:")
+
+
 @dataclass(frozen=True)
 class Fact:
     id: int
@@ -25,7 +29,7 @@ class Facts:
         return self.db.conn
 
     def add(self, content: str, source: str = "user") -> Fact:
-        content = " ".join(content.split())
+        content = normalize_fact_content(content)
         if not content:
             raise ValueError("Факт не может быть пустым")
         now = utc_now()
@@ -39,6 +43,15 @@ class Facts:
     def get(self, fact_id: int) -> Fact | None:
         row = self.conn.execute("SELECT * FROM facts WHERE id = ?", (fact_id,)).fetchone()
         return Fact(*row) if row else None
+
+    def find_exact(self, content: str) -> Fact | None:
+        target = normalize_fact_content(content).casefold()
+        if not target:
+            return None
+        for fact in self.list(limit=10000):
+            if fact.content.casefold() == target:
+                return fact
+        return None
 
     def list(self, limit: int = 100) -> list[Fact]:
         rows = self.conn.execute("SELECT * FROM facts ORDER BY id ASC LIMIT ?", (limit,))

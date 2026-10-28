@@ -10,10 +10,10 @@ from pathlib import Path
 from . import __version__
 from .core.assistant import Assistant, AssistantError
 from .core.events import Event
-from .memory import Database
-from .personality import MOODS, load_mood, reset_mood, set_mood
+from .memory import Database, FactProposal
+from .personality import MOODS, load_mood, reset_mood, set_mood, set_parameter
 from .providers import OllamaProvider
-from .settings import ConfigError, Settings, dump_toml
+from .settings import DEFAULT_PERSONA, ConfigError, Settings, dump_toml
 from .storage import paths
 
 try:
@@ -31,9 +31,14 @@ HELP_TEXT = """\
   /resume <id>              продолжить сессию по id
   /history [N]              показать последние N сообщений текущей сессии
   /search <запрос>          поиск по всей истории
-  /delete <id|all>          удалить сессию или всю историю и факты
+  /export [путь]            экспорт истории, фактов и предложений в JSON
+  /delete <id|all>          удалить сессию или все данные
+  /remember <текст>         предложить факт и подтвердить сохранение
   /fact add <текст>         сохранить подтверждённый факт о пользователе
   /facts                    список сохранённых фактов
+  /fact pending             факты, ожидающие подтверждения
+  /fact accept <id>         подтвердить предложенный факт
+  /fact reject <id>         отклонить предложенный факт
   /fact del <id>            удалить факт
   /fact clear               удалить все факты
   /model [имя]              показать или сменить модель Ollama
@@ -41,8 +46,10 @@ HELP_TEXT = """\
   /cloud on|off             разрешить или запретить облачный режим
   /stream on|off            включить или выключить потоковый вывод
   /mood [настроение]        показать или сменить настроение
-  /reset                    сбросить настройки характера
-  /persona [edit]           показать или отредактировать persona.md
+  /tone <параметр> <0..1>   familiarity, verbosity или initiative
+  /character [reset]        показать или сбросить характер
+  /reset                    сбросить настроение и параметры стиля
+  /persona [edit|reset]     показать, изменить или сбросить persona.md
   /settings                 показать текущие настройки
   /status                   проверить доступность модели
   /config                   показать пути конфигурации и данных
@@ -113,6 +120,9 @@ class ChatCLI:
         suffix = f" — «{title}»" if title else ""
         print(f"Amadeus {__version__} — локальный ассистент. /help для команд.")
         print(f"Сессия #{self.assistant.session_id}{suffix}, сообщений: {count}.")
+        pending = self.assistant.proposals.count()
+        if pending:
+            print(f"Ожидают подтверждения фактов: {pending}. Список: /fact pending")
         print()
 
     def _handle_message(self, text: str) -> None:
@@ -144,6 +154,37 @@ class ChatCLI:
         else:
             print(f"Amadeus: {answer}")
         print()
+        self._maybe_propose_from_text(text)
+
+    def _maybe_propose_from_text(self, text: str) -> None:
+        try:
+            proposal = self.assistant.propose_from_text(text)
+        except ValueError as exc:
+            print(f"Память: {exc}", file=sys.stderr)
+            return
+        if proposal is not None:
+            self._review_proposal(proposal)
+
+    def _review_proposal(self, proposal: FactProposal) -> None:
+        print(f"[Память] Предлагаю сохранить факт:\n  {proposal.content}")
+        try:
+            answer = input("Сохранить? [да/нет/позже]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            print("Предложение оставлено в ожидании. Список: /fact pending")
+            return
+        if answer in ("да", "д", "yes", "y"):
+            fact = self.assistant.accept_proposal(proposal.id)
+            if fact is None:
+                print("Предложение уже не найдено.")
+            else:
+                print(f"Сохранён факт #{fact.id}.")
+        elif answer in ("нет", "н", "no", "n"):
+            self.assistant.reject_proposal(proposal.id)
+            print("Предложение отклонено.")
+        else:
+            print("Предложение оставлено в ожидании. Список: /fact pending")
+        print()
 
     def _handle_command(self, line: str) -> None:
         try:
@@ -163,7 +204,9 @@ class ChatCLI:
             "/resume": self._cmd_resume,
             "/history": self._cmd_history,
             "/search": self._cmd_search,
+            "/export": self._cmd_export,
             "/delete": self._cmd_delete,
+            "/remember": self._cmd_remember,
             "/facts": self._cmd_facts,
             "/fact": self._cmd_fact,
             "/model": self._cmd_model,
@@ -171,6 +214,8 @@ class ChatCLI:
             "/cloud": self._cmd_cloud,
             "/stream": self._cmd_stream,
             "/mood": self._cmd_mood,
+            "/tone": self._cmd_tone,
+            "/character": self._cmd_character,
             "/reset": self._cmd_reset,
             "/persona": self._cmd_persona,
             "/settings": self._cmd_settings,
@@ -246,17 +291,22 @@ class ChatCLI:
             print(_truncate(hit.content, 500))
             print()
 
+    def _cmd_export(self, args: list[str]) -> None:
+        path = " ".join(args).strip() or None
+        target = self.assistant.export(path)
+        print(f"Экспортировано: {target}")
+
     def _cmd_delete(self, args: list[str]) -> None:
         if not args:
             raise ValueError("Использование: /delete <id|all>")
         target = args[0].lower()
         if target == "all":
-            if not _confirm("Удалить всю историю и все факты безвозвратно?"):
+            if not _confirm("Удалить всю историю, факты и предложения фактов безвозвратно?"):
                 print("Отменено.")
                 return
             self.assistant.history.delete_all()
             self.assistant.detach_session()
-            print("История и факты удалены.")
+            print("История, факты и предложения удалены.")
             return
         if not target.isdigit():
             raise ValueError("Использование: /delete <id|all>")
@@ -271,24 +321,63 @@ class ChatCLI:
             self.assistant.detach_session()
         print(f"Сессия #{session_id} удалена.")
 
+    def _cmd_remember(self, args: list[str]) -> None:
+        text = " ".join(args).strip()
+        if not text:
+            raise ValueError("Использование: /remember <текст>")
+        proposal = self.assistant.propose_fact(text, source="user_request")
+        self._review_proposal(proposal)
+
     def _cmd_facts(self, args: list[str]) -> None:
         facts = self.assistant.facts.list()
         if not facts:
-            print("Сохранённых фактов нет. /fact add <текст>")
-            return
-        for fact in facts:
-            print(f"#{fact.id:<4} {fact.content}  ({fact.created_at[:19]})")
+            print("Сохранённых фактов нет. /fact add <текст> или /remember <текст>")
+        else:
+            for fact in facts:
+                print(f"#{fact.id:<4} {fact.content}  ({fact.created_at[:19]})")
+        pending = self.assistant.proposals.count()
+        if pending:
+            print(f"\nОжидают подтверждения: {pending}. Список: /fact pending")
 
     def _cmd_fact(self, args: list[str]) -> None:
         if not args:
-            raise ValueError("Использование: /fact add <текст> | del <id> | clear")
+            raise ValueError(
+                "Использование: /fact add <текст> | pending | accept <id> | "
+                "reject <id> | del <id> | clear"
+            )
         action = args[0].lower()
         if action == "add":
             text = " ".join(args[1:]).strip()
             if not text:
                 raise ValueError("Использование: /fact add <текст>")
+            existing = self.assistant.facts.find_exact(text)
+            if existing is not None:
+                raise ValueError(f"Факт уже сохранён под #{existing.id}.")
             fact = self.assistant.facts.add(text, source="user_confirmed")
             print(f"Сохранён факт #{fact.id}.")
+        elif action == "pending":
+            proposals = self.assistant.proposals.pending()
+            if not proposals:
+                print("Нет фактов, ожидающих подтверждения.")
+                return
+            for proposal in proposals:
+                print(f"#{proposal.id:<4} {proposal.content}  ({proposal.source})")
+            print("\n/fact accept <id> или /fact reject <id>")
+        elif action == "accept":
+            if len(args) < 2 or not args[1].isdigit():
+                raise ValueError("Использование: /fact accept <id>")
+            proposal_id = int(args[1])
+            fact = self.assistant.accept_proposal(proposal_id)
+            if fact is None:
+                raise ValueError(f"Предложение #{proposal_id} не найдено.")
+            print(f"Сохранён факт #{fact.id}: {fact.content}")
+        elif action == "reject":
+            if len(args) < 2 or not args[1].isdigit():
+                raise ValueError("Использование: /fact reject <id>")
+            proposal_id = int(args[1])
+            if not self.assistant.reject_proposal(proposal_id):
+                raise ValueError(f"Предложение #{proposal_id} не найдено.")
+            print(f"Предложение #{proposal_id} отклонено.")
         elif action in ("del", "delete"):
             if len(args) < 2 or not args[1].isdigit():
                 raise ValueError("Использование: /fact del <id>")
@@ -303,7 +392,10 @@ class ChatCLI:
             self.assistant.facts.delete_all()
             print("Все факты удалены.")
         else:
-            raise ValueError("Использование: /fact add <текст> | del <id> | clear")
+            raise ValueError(
+                "Использование: /fact add <текст> | pending | accept <id> | "
+                "reject <id> | del <id> | clear"
+            )
 
     def _cmd_model(self, args: list[str]) -> None:
         if not args:
@@ -398,6 +490,37 @@ class ChatCLI:
         mood = set_mood(self.settings, args[0])
         print(f"Настроение: {mood.mood} — {mood.description}")
 
+    def _cmd_tone(self, args: list[str]) -> None:
+        if len(args) != 2:
+            raise ValueError("Использование: /tone <familiarity|verbosity|initiative> <0..1>")
+        name = args[0].lower()
+        if name not in ("familiarity", "verbosity", "initiative"):
+            raise ValueError("Доступные параметры: familiarity, verbosity, initiative.")
+        try:
+            value = float(args[1].replace(",", "."))
+        except ValueError as exc:
+            raise ValueError("Значение должно быть числом от 0 до 1.") from exc
+        if not 0.0 <= value <= 1.0:
+            raise ValueError("Значение должно быть от 0 до 1.")
+        mood = set_parameter(self.settings, name, value)
+        print(f"{name}={getattr(mood, name):.1f}, настроение={mood.mood}. Изменение сохранено.")
+
+    def _cmd_character(self, args: list[str]) -> None:
+        if args and args[0].lower() == "reset":
+            mood = reset_mood(self.settings)
+            print(f"Характер сброшен: {mood.mood}, параметры по умолчанию.")
+            return
+        if args:
+            raise ValueError("Использование: /character [reset]")
+        mood = load_mood(self.settings)
+        print(f"Настроение: {mood.mood} — {mood.description}")
+        print(
+            f"familiarity={mood.familiarity:.1f}, verbosity={mood.verbosity:.1f}, "
+            f"initiative={mood.initiative:.1f}"
+        )
+        print(f"Персона: {self.assistant.persona_path}")
+        print("Изменить: /mood <имя>, /tone <параметр> <0..1>, /persona edit")
+
     def _cmd_reset(self, args: list[str]) -> None:
         mood = reset_mood(self.settings)
         print(f"Характер сброшен: {mood.mood}.")
@@ -411,8 +534,17 @@ class ChatCLI:
                 raise ValueError(f"Не удалось прочитать {path}: {exc}") from exc
             print(f"\nФайл: {path}")
             return
-        if args[0].lower() != "edit":
-            raise ValueError("Использование: /persona [edit]")
+        action = args[0].lower()
+        if action == "reset":
+            if not _confirm("Вернуть стандартную персону? Текущий текст будет перезаписан."):
+                print("Отменено.")
+                return
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(DEFAULT_PERSONA, encoding="utf-8")
+            print("Персона сброшена к стандартной.")
+            return
+        if action != "edit":
+            raise ValueError("Использование: /persona [edit|reset]")
         editor = os.environ.get("EDITOR", "nano")
         command = shlex.split(editor) or ["nano"]
         try:

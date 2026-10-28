@@ -1,8 +1,20 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
-from ..memory import Database, Facts, History, MemoryContext, Retrieval
+from ..memory import (
+    Database,
+    Fact,
+    FactProposal,
+    Facts,
+    History,
+    MemoryContext,
+    Proposals,
+    Retrieval,
+    detect_remember_request,
+    export_json,
+)
 from ..memory.history import Message
 from ..personality import build_system_prompt, load_mood, load_persona
 from ..providers import ChunkCallback, ProviderError
@@ -31,6 +43,7 @@ class Assistant:
         self.events = events or EventBus()
         self.history = History(self.db)
         self.facts = Facts(self.db)
+        self.proposals = Proposals(self.db, self.facts)
         self.retrieval = Retrieval(self.history, self.facts)
         self.router = Router(settings)
         self.persona_path = persona_path or paths.persona_path()
@@ -55,6 +68,27 @@ class Assistant:
 
     def detach_session(self) -> None:
         self._session_id = None
+
+    def propose_fact(self, content: str, source: str = "user_request") -> FactProposal:
+        return self.proposals.propose(content, source=source)
+
+    def propose_from_text(self, text: str) -> FactProposal | None:
+        content = detect_remember_request(text)
+        if content is None:
+            return None
+        return self.proposals.propose(content, source="user_request")
+
+    def accept_proposal(self, proposal_id: int) -> Fact | None:
+        return self.proposals.accept(proposal_id)
+
+    def reject_proposal(self, proposal_id: int) -> bool:
+        return self.proposals.reject(proposal_id)
+
+    def export(self, path: Path | str | None = None) -> Path:
+        if path is None:
+            stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+            path = paths.data_dir() / "exports" / f"amadeus-{stamp}.json"
+        return export_json(self.history, self.facts, self.proposals, path)
 
     def provider_status(self) -> ProviderStatus:
         try:

@@ -160,3 +160,75 @@ def test_cloud_disabled_is_reported(tmp_path, settings):
     with pytest.raises(AssistantError, match="Облачный провайдер отключён"):
         assistant.respond("Вопрос")
     assistant.close()
+
+
+def test_propose_from_text_requires_confirmation(tmp_path, settings):
+    assistant = make_assistant(tmp_path, settings)
+    proposal = assistant.propose_from_text("Запомни, что я люблю чай")
+    assert proposal is not None
+    assert assistant.facts.list() == []
+    assert [item.id for item in assistant.proposals.pending()] == [proposal.id]
+
+    fake = FakeProvider()
+    assistant.router.selected = lambda: fake
+    assistant.router.can_fallback = lambda: False
+    assistant.respond("Что я люблю?")
+    assert "я люблю чай" not in fake.messages[0]["content"]
+
+    fact = assistant.accept_proposal(proposal.id)
+    assert fact is not None
+    assert assistant.facts.list()[0].content == "я люблю чай"
+    assert assistant.proposals.pending() == []
+    assistant.respond("А теперь?")
+    assert "я люблю чай" in fake.messages[0]["content"]
+    assistant.close()
+
+
+def test_propose_from_text_ignores_regular_messages(tmp_path, settings):
+    assistant = make_assistant(tmp_path, settings)
+    assert assistant.propose_from_text("Просто сообщение") is None
+    assert assistant.proposals.count() == 0
+    assistant.close()
+
+
+def test_context_survives_restart(tmp_path, settings):
+    db_path = tmp_path / "restart.db"
+    persona = tmp_path / "persona.md"
+    first = Assistant(settings, db=Database(db_path), persona_path=persona)
+    fake = FakeProvider(answer="Ответ")
+    first.router.selected = lambda: fake
+    first.router.can_fallback = lambda: False
+    first.respond("Привет")
+    first.facts.add("Пользователь любит чай")
+    first.close()
+
+    second = Assistant(settings, db=Database(db_path), persona_path=persona)
+    fake2 = FakeProvider(answer="Ты любишь чай")
+    second.router.selected = lambda: fake2
+    second.router.can_fallback = lambda: False
+    second.respond("Что я люблю?")
+
+    assert [m["content"] for m in fake2.messages[1:]] == [
+        "Привет",
+        "Ответ",
+        "Что я люблю?",
+    ]
+    assert "Пользователь любит чай" in fake2.messages[0]["content"]
+    second.close()
+
+
+def test_export_from_assistant(tmp_path, settings):
+    import json
+
+    assistant = make_assistant(tmp_path, settings)
+    fake = FakeProvider(answer="Ответ")
+    assistant.router.selected = lambda: fake
+    assistant.router.can_fallback = lambda: False
+    assistant.respond("Привет")
+    assistant.facts.add("Факт для экспорта")
+
+    target = assistant.export(tmp_path / "exports" / "data.json")
+    payload = json.loads(target.read_text(encoding="utf-8"))
+    assert payload["sessions"][0]["messages"][0]["content"] == "Привет"
+    assert payload["facts"][0]["content"] == "Факт для экспорта"
+    assistant.close()
