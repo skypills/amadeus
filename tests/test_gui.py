@@ -224,3 +224,34 @@ def test_chat_worker_web_search_passes_sources(qapp, settings, tmp_path, monkeyp
     assert sources[0][0].url == "https://example.com"
     assert "https://example.com" in captured["context"]
     assert "НЕДОВЕРЕННЫЕ" in captured["context"]
+
+
+def test_summary_worker(qapp, settings, tmp_path):
+    from types import SimpleNamespace
+
+    from amadeus.ui.window import SummaryWorker
+
+    class FakeSummaryAssistant:
+        def resume(self, session_id):
+            self.session_id = session_id
+            return True
+
+        def summarize_session(self):
+            return SimpleNamespace(content="сводка текста")
+
+        def close(self):
+            self.closed = True
+
+    fake = FakeSummaryAssistant()
+    worker = SummaryWorker(
+        settings,
+        4,
+        tmp_path / "persona.md",
+        assistant_factory=lambda: fake,
+    )
+    results = []
+    worker.done.connect(results.append)
+    worker.run()
+    assert results == ["сводка текста"]
+    assert fake.session_id == 4
+    assert fake.closed

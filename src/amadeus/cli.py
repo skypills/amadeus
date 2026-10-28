@@ -41,6 +41,8 @@ HELP_TEXT = """\
   /resume <id>              продолжить сессию по id
   /history [N]              показать последние N сообщений текущей сессии
   /search <запрос>          поиск по всей истории
+  /summarize                создать сводку текущей сессии
+  /summary [show|clear]     показать или удалить сохранённую сводку
   /export [путь]            экспорт истории, фактов и предложений в JSON
   /delete <id|all>          удалить сессию или все данные
   /remember <текст>         предложить факт и подтвердить сохранение
@@ -49,6 +51,7 @@ HELP_TEXT = """\
   /fact pending             факты, ожидающие подтверждения
   /fact accept <id>         подтвердить предложенный факт
   /fact reject <id>         отклонить предложенный факт
+  /fact edit <id> <текст>   изменить факт
   /fact del <id>            удалить факт
   /fact clear               удалить все факты
   /model [имя]              показать или сменить модель Ollama
@@ -242,6 +245,8 @@ class ChatCLI:
             "/resume": self._cmd_resume,
             "/history": self._cmd_history,
             "/search": self._cmd_search,
+            "/summarize": self._cmd_summarize,
+            "/summary": self._cmd_summary,
             "/export": self._cmd_export,
             "/delete": self._cmd_delete,
             "/remember": self._cmd_remember,
@@ -337,6 +342,37 @@ class ChatCLI:
             print(_truncate(hit.content, 500))
             print()
 
+    def _cmd_summarize(self, args: list[str]) -> None:
+        print("Создаю сводку сессии…", flush=True)
+        try:
+            summary = self.assistant.summarize_session()
+        except AssistantError as exc:
+            print(f"Сводка: {exc}", file=sys.stderr)
+            return
+        print(
+            f"Сводка сохранена (по сообщение #{summary.through_message_id}, "
+            f"{summary.updated_at[:19]}):"
+        )
+        print(summary.content)
+
+    def _cmd_summary(self, args: list[str]) -> None:
+        action = args[0].lower() if args else "show"
+        if action == "clear":
+            if not _confirm("Удалить сохранённую сводку текущей сессии?"):
+                print("Отменено.")
+                return
+            self.assistant.summaries.delete(self.assistant.session_id)
+            print("Сводка удалена.")
+            return
+        if action != "show":
+            raise ValueError("Использование: /summary [show|clear]")
+        summary = self.assistant.summaries.get(self.assistant.session_id)
+        if summary is None:
+            print("Сводки нет. Создать: /summarize")
+            return
+        print(f"Сводка по сообщение #{summary.through_message_id} ({summary.updated_at[:19]}):")
+        print(summary.content)
+
     def _cmd_export(self, args: list[str]) -> None:
         path = " ".join(args).strip() or None
         target = self.assistant.export(path)
@@ -388,8 +424,8 @@ class ChatCLI:
     def _cmd_fact(self, args: list[str]) -> None:
         if not args:
             raise ValueError(
-                "Использование: /fact add <текст> | pending | accept <id> | "
-                "reject <id> | del <id> | clear"
+                "Использование: /fact add <текст> | edit <id> <текст> | pending | "
+                "accept <id> | reject <id> | del <id> | clear"
             )
         action = args[0].lower()
         if action == "add":
@@ -424,6 +460,14 @@ class ChatCLI:
             if not self.assistant.reject_proposal(proposal_id):
                 raise ValueError(f"Предложение #{proposal_id} не найдено.")
             print(f"Предложение #{proposal_id} отклонено.")
+        elif action == "edit":
+            if len(args) < 3 or not args[1].isdigit():
+                raise ValueError("Использование: /fact edit <id> <текст>")
+            fact_id = int(args[1])
+            fact = self.assistant.facts.update(fact_id, " ".join(args[2:]))
+            if fact is None:
+                raise ValueError(f"Факт #{fact_id} не найден.")
+            print(f"Факт #{fact.id} обновлён: {fact.content}")
         elif action in ("del", "delete"):
             if len(args) < 2 or not args[1].isdigit():
                 raise ValueError("Использование: /fact del <id>")
@@ -439,8 +483,8 @@ class ChatCLI:
             print("Все факты удалены.")
         else:
             raise ValueError(
-                "Использование: /fact add <текст> | pending | accept <id> | "
-                "reject <id> | del <id> | clear"
+                "Использование: /fact add <текст> | edit <id> <текст> | pending | "
+                "accept <id> | reject <id> | del <id> | clear"
             )
 
     def _cmd_model(self, args: list[str]) -> None:

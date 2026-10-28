@@ -57,6 +57,21 @@ class Facts:
         rows = self.conn.execute("SELECT * FROM facts ORDER BY id ASC LIMIT ?", (limit,))
         return [Fact(*row) for row in rows]
 
+    def update(self, fact_id: int, content: str) -> Fact | None:
+        content = normalize_fact_content(content)
+        if not content:
+            raise ValueError("Факт не может быть пустым")
+        existing = self.find_exact(content)
+        if existing is not None and existing.id != fact_id:
+            raise ValueError(f"Такой факт уже сохранён под #{existing.id}.")
+        now = utc_now()
+        cursor = self.conn.execute(
+            "UPDATE facts SET content = ?, updated_at = ? WHERE id = ?",
+            (content, now, fact_id),
+        )
+        self.conn.commit()
+        return self.get(fact_id) if cursor.rowcount else None
+
     def delete(self, fact_id: int) -> bool:
         cursor = self.conn.execute("DELETE FROM facts WHERE id = ?", (fact_id,))
         self.conn.commit()

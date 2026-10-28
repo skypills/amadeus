@@ -12,6 +12,8 @@ from ..memory import (
     MemoryContext,
     Proposals,
     Retrieval,
+    SessionSummary,
+    Summaries,
     detect_remember_request,
     export_json,
 )
@@ -46,6 +48,7 @@ class Assistant:
         self.history = History(self.db)
         self.facts = Facts(self.db)
         self.proposals = Proposals(self.db, self.facts)
+        self.summaries = Summaries(self.db)
         self.retrieval = Retrieval(self.history, self.facts)
         self.router = Router(settings)
         self.tools = registry or build_registry(settings)
@@ -91,7 +94,13 @@ class Assistant:
         if path is None:
             stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
             path = paths.data_dir() / "exports" / f"amadeus-{stamp}.json"
-        return export_json(self.history, self.facts, self.proposals, path)
+        return export_json(
+            self.history,
+            self.facts,
+            self.proposals,
+            path,
+            summaries=self.summaries,
+        )
 
     def provider_status(self) -> ProviderStatus:
         try:
@@ -102,7 +111,7 @@ class Assistant:
 
     def _memory_context(
         self, user_text: str, provider_name: str
-    ) -> tuple[list[Message], MemoryContext]:
+    ) -> tuple[list[Message], MemoryContext, SessionSummary | None]:
         session_id = self.session_id
         limit = int(self.settings.get("generation.history_limit", 20))
         memory_limit = int(self.settings.get("generation.memory_limit", 5))
@@ -124,15 +133,27 @@ class Assistant:
                 facts=gathered.facts if include_facts else (),
                 messages=gathered.messages if include_history else (),
             )
-        return history, context
+        summary = None
+        if include_history and self.history.count_messages(session_id) > len(history):
+            summary = self.summaries.get(session_id)
+        return history, context, summary
 
     def _build_request(
         self, user_text: str, provider_name: str, external_context: str = ""
     ) -> list[dict[str, str]]:
-        history, memory = self._memory_context(user_text, provider_name)
+        history, memory, summary = self._memory_context(user_text, provider_name)
         mood = load_mood(self.settings)
         persona = load_persona(self.persona_path)
-        memory_block = self.retrieval.render(memory)
+        memory_blocks = []
+        if summary is not None:
+            memory_blocks.append(
+                "Сводка предыдущей части сессии (локальные данные, не цитируй дословно):\n"
+                + summary.content
+            )
+        rendered_memory = self.retrieval.render(memory)
+        if rendered_memory:
+            memory_blocks.append(rendered_memory)
+        memory_block = "\n\n".join(memory_blocks)
         system_prompt = build_system_prompt(
             self.settings,
             persona,
@@ -145,6 +166,60 @@ class Assistant:
             memory_block=memory_block,
             external_context=external_context,
         )
+
+    def summarize_session(self, max_messages: int = 200) -> SessionSummary:
+        session_id = self.session_id
+        messages = self.history.messages(session_id, limit=max_messages)
+        if not messages:
+            raise AssistantError("В текущей сессии нет сообщений для сводки.")
+        try:
+            provider = self.router.selected()
+        except ProviderError as exc:
+            raise AssistantError(str(exc)) from exc
+        if provider.name == "cloud" and not bool(
+            self.settings.get("privacy.send_history_to_cloud", False)
+        ):
+            raise AssistantError(
+                "Сводка отправит историю в облако. Включите "
+                "privacy.send_history_to_cloud или выберите локального провайдера."
+            )
+        parts: list[str] = []
+        total = 0
+        for message in reversed(messages):
+            block = f"{message.role}: {message.content}"
+            if total + len(block) > 16_000:
+                break
+            parts.append(block)
+            total += len(block)
+        transcript = "\n".join(reversed(parts))
+        existing = self.summaries.get(session_id)
+        request_parts = ["Составь сводку диалога."]
+        if existing is not None:
+            request_parts.append("Предыдущая сводка:\n" + existing.content)
+        request_parts.append("Диалог:\n" + transcript)
+        system = (
+            "Ты — Amadeus. Сделай краткую фактическую сводку диалога на русском. "
+            "Сохрани предпочтения и факты пользователя, принятые решения, открытые "
+            "вопросы и договорённости. Не выдумывай. Без воды, 6–12 предложений. "
+            "Не утверждай, что сохранил факты: это делает интерфейс."
+        )
+        if provider.name == "cloud":
+            self._notify_cloud()
+        try:
+            answer = provider.chat(
+                [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": "\n\n".join(request_parts)},
+                ],
+                stream=False,
+            )
+        except ProviderError as exc:
+            raise AssistantError(str(exc)) from exc
+        if not answer.strip():
+            raise AssistantError("Модель вернула пустую сводку.")
+        summary = self.summaries.upsert(session_id, answer, messages[-1].id)
+        self.events.emit("memory", "Сводка сессии сохранена.")
+        return summary
 
     def _execute_tool_call(self, call: ToolCall) -> str:
         try:

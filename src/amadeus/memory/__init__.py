@@ -9,6 +9,7 @@ from .proposals import (
     normalize_fact,
 )
 from .retrieval import MemoryContext, Retrieval
+from .summaries import SessionSummary, Summaries
 
 __all__ = [
     "Database",
@@ -21,6 +22,8 @@ __all__ = [
     "Proposals",
     "Retrieval",
     "SearchHit",
+    "SessionSummary",
+    "Summaries",
     "build_export",
     "detect_remember_request",
     "export_json",

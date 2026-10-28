@@ -37,6 +37,14 @@ CREATE TABLE IF NOT EXISTS fact_proposals (
     source TEXT NOT NULL DEFAULT 'user_request',
     created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS session_summaries (
+    session_id INTEGER PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+    content TEXT NOT NULL,
+    through_message_id INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 """
 
 FTS_SCHEMA = """

@@ -141,10 +141,17 @@ class History:
         self.conn.commit()
         return cursor.rowcount > 0
 
+    def count_messages(self, session_id: int) -> int:
+        row = self.conn.execute(
+            "SELECT COUNT(*) FROM messages WHERE session_id = ?", (session_id,)
+        ).fetchone()
+        return int(row[0]) if row else 0
+
     def delete_all(self) -> None:
         self.conn.execute("DELETE FROM sessions")
         self.conn.execute("DELETE FROM facts")
         self.conn.execute("DELETE FROM fact_proposals")
+        self.conn.execute("DELETE FROM session_summaries")
         self.conn.commit()
 
     def search(

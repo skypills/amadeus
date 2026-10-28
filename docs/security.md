@@ -59,7 +59,10 @@
 - `/sessions`, `/search` — вся история;
 - `/delete <id|all>` — удаление сессии или всех данных;
 - `/facts`, `/fact pending`, `/fact accept|reject <id>`,
-  `/fact del <id>`, `/fact clear` — управление фактами и предложениями;
+  `/fact edit <id> <текст>`, `/fact del <id>`, `/fact clear` — управление
+  фактами и предложениями;
+- `/summarize`, `/summary clear` — локальная сводка сессии; в облако она уходит
+  только при `privacy.send_history_to_cloud`;
 - `/export [путь]` — экспорт истории, фактов и предложений в JSON; настройки и
   секреты в экспорт не попадают.
 

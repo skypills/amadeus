@@ -148,6 +148,46 @@ class VoiceWorker(QThread):
             self.failed.emit(str(exc))
 
 
+class SummaryWorker(QThread):
+    done = Signal(str)
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        settings: Settings,
+        session_id: int,
+        persona_path: Path,
+        assistant_factory=None,
+    ) -> None:
+        super().__init__()
+        self.settings = settings
+        self.session_id = session_id
+        self.persona_path = persona_path
+        self._assistant_factory = assistant_factory
+
+    def run(self) -> None:
+        assistant = None
+        try:
+            if self._assistant_factory is not None:
+                assistant = self._assistant_factory()
+            else:
+                assistant = Assistant(
+                    self.settings,
+                    db=Database(),
+                    events=EventBus(),
+                    persona_path=self.persona_path,
+                )
+            if not assistant.resume(self.session_id):
+                raise RuntimeError("Текущая сессия не найдена.")
+            summary = assistant.summarize_session()
+            self.done.emit(summary.content)
+        except Exception as exc:  # noqa: BLE001 - ошибка должна попасть в UI
+            self.failed.emit(str(exc))
+        finally:
+            if assistant is not None:
+                assistant.close()
+
+
 class StatusWorker(QThread):
     result = Signal(bool, str, object)
 
@@ -178,6 +218,7 @@ class MainWindow(QMainWindow):
         self.voice = voice_pipeline or VoicePipeline(settings)
         self._voice_status: dict[str, tuple[bool, str]] = {}
         self._voice_worker: VoiceWorker | None = None
+        self._summary_worker: SummaryWorker | None = None
         self._worker: ChatWorker | None = None
         self._status_worker: StatusWorker | None = None
         self._stream_bubble: MessageBubble | None = None
@@ -276,11 +317,14 @@ class MainWindow(QMainWindow):
         history_buttons = QHBoxLayout()
         self.new_button = QPushButton("Новая")
         self.new_button.clicked.connect(self._new_session)
+        self.summary_button = QPushButton("Сводка")
+        self.summary_button.clicked.connect(self._summarize_session)
         self.delete_session_button = QPushButton("Удалить")
         self.delete_session_button.clicked.connect(self._delete_session)
         refresh_button = QPushButton("Обновить")
         refresh_button.clicked.connect(lambda: self._refresh_history())
         history_buttons.addWidget(self.new_button)
+        history_buttons.addWidget(self.summary_button)
         history_buttons.addWidget(self.delete_session_button)
         history_buttons.addWidget(refresh_button)
         history_layout.addWidget(self.history_search)
@@ -296,6 +340,8 @@ class MainWindow(QMainWindow):
         facts_buttons = QHBoxLayout()
         add_fact_button = QPushButton("Добавить")
         add_fact_button.clicked.connect(self._add_fact)
+        self.edit_fact_button = QPushButton("Изменить")
+        self.edit_fact_button.clicked.connect(self._edit_fact)
         self.delete_fact_button = QPushButton("Удалить")
         self.delete_fact_button.clicked.connect(self._delete_fact)
         self.accept_fact_button = QPushButton("Принять")
@@ -305,6 +351,7 @@ class MainWindow(QMainWindow):
         refresh_facts_button = QPushButton("Обновить")
         refresh_facts_button.clicked.connect(self._refresh_facts)
         facts_buttons.addWidget(add_fact_button)
+        facts_buttons.addWidget(self.edit_fact_button)
         facts_buttons.addWidget(self.delete_fact_button)
         facts_buttons.addWidget(self.accept_fact_button)
         facts_buttons.addWidget(self.reject_fact_button)
@@ -391,6 +438,7 @@ class MainWindow(QMainWindow):
         self.stop_button.setEnabled(busy)
         self.history_list.setEnabled(not busy)
         self.new_button.setEnabled(not busy)
+        self.summary_button.setEnabled(not busy)
         self.delete_session_button.setEnabled(not busy)
         self.history_search.setEnabled(not busy)
         self._update_voice_buttons()
@@ -746,6 +794,38 @@ class MainWindow(QMainWindow):
         self.history_search.clear()
         self.input.setFocus()
 
+    def _summarize_session(self) -> None:
+        if self._busy or (self._summary_worker is not None and self._summary_worker.isRunning()):
+            return
+        worker = SummaryWorker(
+            self.settings,
+            self.assistant.session_id,
+            self.assistant.persona_path,
+        )
+        worker.done.connect(self._on_summary_done)
+        worker.failed.connect(self._on_summary_failed)
+        worker.finished.connect(lambda: self._on_summary_finished(worker))
+        self._summary_worker = worker
+        self._set_busy(True)
+        self.stop_button.setEnabled(False)
+        self.statusBar().showMessage("Создаю сводку сессии…", 0)
+        worker.start()
+
+    def _on_summary_done(self, content: str) -> None:
+        self.chat.add_message("system", "Сводка сессии:\n\n" + content)
+        self.statusBar().showMessage("Сводка сохранена.", 8000)
+
+    def _on_summary_failed(self, message: str) -> None:
+        QMessageBox.warning(self, "Сводка", message)
+        self.statusBar().showMessage("Сводка не создана.", 8000)
+
+    def _on_summary_finished(self, worker: SummaryWorker) -> None:
+        if self._summary_worker is worker:
+            self._summary_worker = None
+        worker.deleteLater()
+        if self._busy:
+            self._set_busy(False)
+
     def _delete_session(self) -> None:
         item = self.history_list.currentItem()
         if item is None:
@@ -795,6 +875,7 @@ class MainWindow(QMainWindow):
     def _update_fact_buttons(self) -> None:
         data = self._selected_fact()
         kind = data.get("kind") if data else None
+        self.edit_fact_button.setEnabled(kind == "fact")
         self.delete_fact_button.setEnabled(kind == "fact")
         self.accept_fact_button.setEnabled(kind == "proposal")
         self.reject_fact_button.setEnabled(kind == "proposal")
@@ -814,6 +895,27 @@ class MainWindow(QMainWindow):
             return
         fact = self.assistant.facts.add(text, source="user_confirmed")
         self.statusBar().showMessage(f"Сохранён факт #{fact.id}.", 8000)
+        self._refresh_facts()
+
+    def _edit_fact(self) -> None:
+        data = self._selected_fact()
+        if not data or data.get("kind") != "fact":
+            return
+        fact_id = int(data["id"])
+        fact = self.assistant.facts.get(fact_id)
+        if fact is None:
+            self._refresh_facts()
+            return
+        text, ok = QInputDialog.getText(self, "Изменить факт", "Текст факта:", text=fact.content)
+        if not ok or not text.strip():
+            return
+        try:
+            updated = self.assistant.facts.update(fact_id, text)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Факт", str(exc))
+            return
+        if updated is not None:
+            self.statusBar().showMessage(f"Факт #{updated.id} обновлён.", 8000)
         self._refresh_facts()
 
     def _delete_fact(self) -> None:
@@ -1027,6 +1129,15 @@ class MainWindow(QMainWindow):
         if self.voice.recording:
             self.voice.cancel_recording()
         self.voice.stop_speaking()
+        if self._summary_worker is not None and self._summary_worker.isRunning():
+            if not self._summary_worker.wait(10_000):
+                QMessageBox.warning(
+                    self,
+                    "Сводка",
+                    "Сводка ещё создаётся. Дождитесь завершения.",
+                )
+                event.ignore()
+                return
         if self._voice_worker is not None and self._voice_worker.isRunning():
             if not self._voice_worker.wait(10_000):
                 QMessageBox.warning(
