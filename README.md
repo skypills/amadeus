@@ -1,9 +1,9 @@
 # Amadeus
 
 Локальный ИИ-ассистент для CachyOS, вдохновлённый Amadeus из «Врат Штейна».
-Это **этап 3** по ТЗ: CLI, долговременная память с подтверждением фактов,
-настраиваемый характер и GUI на PySide6 с общим ядром. Голос, инструменты и
-веб-поиск появятся на следующих этапах.
+Это **этап 4** по ТЗ: CLI, память с подтверждением фактов, характер, GUI на
+PySide6 и локальный голос (whisper.cpp + Piper). Инструменты и веб-поиск
+появятся на следующих этапах.
 
 ## Что уже работает
 
@@ -21,6 +21,8 @@
 - GUI на PySide6: чат с потоковым выводом, история и поиск, факты и предложения,
   настройки, состояние модели, экспорт и удаление данных;
 - горячий вызов GUI через конфигурацию Hyprland;
+- локальный голосовой ввод через whisper.cpp и озвучивание через Piper;
+- запись по кнопке, отмена записи, остановка озвучивания;
 - allowlist инструментов и проверка рискованных действий (задел на этап 5);
 - понятные ошибки при недоступности Ollama, модели или сети.
 
@@ -29,6 +31,7 @@
 - CachyOS / Arch Linux, Wayland или X11 (для CLI не важно);
 - Python 3.12+;
 - Ollama (локальный провайдер);
+- по желанию: whisper.cpp и Piper для голоса;
 - 8–16 ГБ ОЗУ; для 16 ГБ начните с модели 3B–4B в квантовании.
 
 ## Установка
@@ -93,6 +96,77 @@ amadeus --status
 amadeus --once "Привет, проверка связи"
 ```
 
+## Голос (опционально)
+
+Голос работает полностью локально. Нужны две внешние программы и модели;
+они не входят в Python-пакет.
+
+### whisper.cpp (STT)
+
+Проверьте пакет в репозиториях/AUR или соберите:
+
+```bash
+git clone https://github.com/ggml-org/whisper.cpp
+cd whisper.cpp
+cmake -B build
+cmake --build build -j --config Release
+install -Dm755 build/bin/whisper-cli ~/.local/bin/whisper-cli
+```
+
+Скачайте модель (для русского лучше `small`, если хватает памяти):
+
+```bash
+mkdir -p ~/.local/share/amadeus/models
+curl -L -o ~/.local/share/amadeus/models/ggml-base.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin
+# альтернатива:
+# curl -L -o ~/.local/share/amadeus/models/ggml-small.bin \
+#   https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin
+```
+
+### Piper (TTS)
+
+Установите `piper` (пакет AUR/`pipx install piper-tts` или сборка из
+репозитория rhasspy/piper) и скачайте русский голос:
+
+```bash
+curl -L -o ~/.local/share/amadeus/models/ru_RU-irina-medium.onnx \
+  https://huggingface.co/rhasspy/piper-voices/resolve/main/ru/ru_RU/irina/medium/ru_RU-irina-medium.onnx
+curl -L -o ~/.local/share/amadeus/models/ru_RU-irina-medium.onnx.json \
+  https://huggingface.co/rhasspy/piper-voices/resolve/main/ru/ru_RU/irina/medium/ru_RU-irina-medium.onnx.json
+```
+
+Проверка:
+
+```bash
+whisper-cli --help
+piper --help
+amadeus
+# в CLI: /voice
+```
+
+### Настройки голоса
+
+```toml
+[voice]
+stt_command = "whisper-cli"
+stt_model = "~/.local/share/amadeus/models/ggml-base.bin"
+tts_command = "piper"
+tts_model = "~/.local/share/amadeus/models/ru_RU-irina-medium.onnx"
+language = "ru"
+recorder_command = ""   # пусто = parecord / pw-record / arecord
+player_command = ""     # пусто = pw-play / paplay / aplay / ffplay
+auto_send = true        # отправлять распознанное сразу
+auto_speak = false      # озвучивать ответы автоматически
+```
+
+В GUI кнопки «Записать», «Отменить запись», «Озвучить» и «Стоп TTS».
+В CLI: `/listen 5`, `/say текст`, `/voice status`, `/voice stop`.
+
+Записи удаляются сразу после распознавания. Озвучка сохраняется локально в
+`~/.local/share/amadeus/voice/last-response.wav` и перезаписывается. Голосовые
+данные не отправляются в облако.
+
 ## GUI
 
 ```bash
@@ -109,8 +183,8 @@ amadeus-gui --model qwen2.5:7b-instruct
 - вкладка «Факты»: подтверждённые факты и предложения, которые можно принять
   или отклонить;
 - настройки модели, провайдера, облака и характера;
-- строка состояния: доступность модели, выбранный провайдер, статус микрофона
-  (голос — этап 4);
+- строка состояния: доступность модели, провайдер, микрофон и голос;
+- голосовые кнопки: запись, отмена, озвучивание, остановка TTS;
 - экспорт данных и удаление всей истории через меню «Файл».
 
 GUI и CLI используют один и тот же `Assistant`, базу и настройки.
@@ -165,6 +239,9 @@ update-desktop-database ~/.local/share/applications 2>/dev/null || true
 | `/provider [ollama\|cloud]` | показать/выбрать провайдера |
 | `/cloud on\|off` | разрешить/запретить облако |
 | `/stream on\|off` | потоковый вывод |
+| `/voice [status\|stop]` | состояние голоса / остановить озвучку |
+| `/listen [секунды]` | записать, распознать и отправить |
+| `/say <текст>` | озвучить текст |
 | `/mood [настроение]` | `calm`, `friendly`, `technical`, `supportive` |
 | `/tone <параметр> <0..1>` | familiarity, verbosity или initiative |
 | `/character [reset]` | показать или сбросить характер |
@@ -294,7 +371,7 @@ pytest
 
 Покрыты память, предложения и подтверждение фактов, экспорт, настройки,
 характер, провайдеры, маршрутизация, приватность контекста, разрешения
-инструментов и GUI (offscreen-тесты PySide6).
+инструментов, голосовые адаптеры и GUI (offscreen-тесты PySide6).
 
 ## Диагностика оборудования
 
@@ -331,10 +408,11 @@ ollama list
 Уменьшите модель (3B вместо 7B), `max_tokens` и `history_limit`; закройте
 тяжёлые приложения. Не запускайте несколько LLM одновременно.
 
-**Нет русского голоса/микрофона**
+**Голос не настроен**
 
-Голосовой этап ещё не реализован (этап 4). Сейчас GUI честно показывает
-«Микрофон: не подключён».
+Проверьте `/voice status` в CLI. Убедитесь, что `whisper-cli` и `piper` есть в
+PATH, а файлы моделей существуют по путям из `[voice]`. Для русского языка
+модель `ggml-base` может ошибаться чаще, чем `ggml-small`.
 
 **Где лежат данные**
 
@@ -361,7 +439,7 @@ amadeus/
 │   ├── tools/               # реестр allowlist-инструментов
 │   ├── storage/             # пути platformdirs
 │   ├── ui/                  # PySide6: окно, чат, настройки
-│   └── voice/               # задел на этап 4
+│   └── voice/               # запись, whisper.cpp STT, Piper TTS, плеер
 ├── packaging/               # .desktop и иконка
 ├── config/hyprland.conf.example
 ├── tests/
@@ -373,18 +451,19 @@ amadeus/
 - [x] Этап 1 — текстовое ядро: CLI, Ollama, промпт, SQLite, история, ошибки.
 - [x] Этап 2 — память и личность: подтверждение фактов, экспорт, характер.
 - [x] Этап 3 — GUI на PySide6: чат, история, настройки, статус, Hyprland.
-- [ ] Этап 4 — голос (STT/TTS).
+- [x] Этап 4 — голос: запись, whisper.cpp STT, Piper TTS, остановка озвучки.
 - [ ] Этап 5 — системные инструменты и подтверждения.
 - [ ] Этап 6 — веб-поиск и облачный резерв.
 - [ ] Этап 7 — стабилизация и документация установки.
 
-Следующий шаг — этап 4: локальные STT/TTS, запись по кнопке и озвучивание.
-Часть заделов этапов 5 и 6 уже заложена в коде (allowlist, облачный
-провайдер), но полноценные интерфейсы появятся позже.
+Следующий шаг — этап 5: уведомления, запуск разрешённых приложений,
+системная информация и подтверждение опасных действий. Часть заделов этапа 6
+уже заложена в коде (облачный провайдер).
 
 ## Безопасность
 
 Модель не получает произвольный shell и не сохраняет факты без подтверждения.
 GUI и CLI используют общую политику памяти и приватности. Инструменты
 выполняются только через реестр с allowlist и проверкой риска; опасные
-действия требуют подтверждения. Подробнее — `docs/security.md`.
+действия требуют подтверждения. Голосовые записи удаляются после распознавания.
+Подробнее — `docs/security.md`.

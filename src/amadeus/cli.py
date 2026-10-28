@@ -15,6 +15,7 @@ from .personality import MOODS, load_mood, reset_mood, set_mood, set_parameter
 from .providers import OllamaProvider
 from .settings import DEFAULT_PERSONA, ConfigError, Settings, dump_toml
 from .storage import paths
+from .voice import VoiceError, VoicePipeline
 
 try:
     import readline  # noqa: F401
@@ -47,6 +48,9 @@ HELP_TEXT = """\
   /stream on|off            включить или выключить потоковый вывод
   /mood [настроение]        показать или сменить настроение
   /tone <параметр> <0..1>   familiarity, verbosity или initiative
+  /voice [status|stop]      состояние голосовых компонентов / стоп озвучки
+  /listen [секунды]         записать, распознать и отправить (если auto_send)
+  /say <текст>              озвучить текст локальным TTS
   /character [reset]        показать или сбросить характер
   /reset                    сбросить настроение и параметры стиля
   /persona [edit|reset]     показать, изменить или сбросить persona.md
@@ -92,9 +96,16 @@ class ChatCLI:
         self.events = assistant.events
         self.events.subscribe(_print_event)
         self.running = True
+        self.voice = VoicePipeline(settings)
 
     def run(self) -> int:
         self._print_banner()
+        try:
+            return self._loop()
+        finally:
+            self.voice.close()
+
+    def _loop(self) -> int:
         while self.running:
             try:
                 raw = input("Вы: ")
@@ -125,7 +136,7 @@ class ChatCLI:
             print(f"Ожидают подтверждения фактов: {pending}. Список: /fact pending")
         print()
 
-    def _handle_message(self, text: str) -> None:
+    def _handle_message(self, text: str) -> str | None:
         stream = bool(self.settings.get("ollama.stream", True))
         printed = False
 
@@ -142,12 +153,12 @@ class ChatCLI:
             if printed:
                 print()
             print(f"Ошибка: {exc}", file=sys.stderr)
-            return
+            return None
         except KeyboardInterrupt:
             if printed:
                 print()
             print("Генерация прервана.", file=sys.stderr)
-            return
+            return None
 
         if printed:
             print()
@@ -155,6 +166,13 @@ class ChatCLI:
             print(f"Amadeus: {answer}")
         print()
         self._maybe_propose_from_text(text)
+        if bool(self.settings.get("voice.auto_speak", False)):
+            try:
+                self.voice.speak(answer)
+                print("Озвучиваю ответ. Остановить: /voice stop", file=sys.stderr)
+            except VoiceError as exc:
+                print(f"Озвучивание: {exc}", file=sys.stderr)
+        return answer
 
     def _maybe_propose_from_text(self, text: str) -> None:
         try:
@@ -216,6 +234,9 @@ class ChatCLI:
             "/mood": self._cmd_mood,
             "/tone": self._cmd_tone,
             "/character": self._cmd_character,
+            "/voice": self._cmd_voice,
+            "/listen": self._cmd_listen,
+            "/say": self._cmd_say,
             "/reset": self._cmd_reset,
             "/persona": self._cmd_persona,
             "/settings": self._cmd_settings,
@@ -520,6 +541,55 @@ class ChatCLI:
         )
         print(f"Персона: {self.assistant.persona_path}")
         print("Изменить: /mood <имя>, /tone <параметр> <0..1>, /persona edit")
+
+    def _cmd_voice(self, args: list[str]) -> None:
+        action = args[0].lower() if args else "status"
+        if action == "stop":
+            self.voice.stop_speaking()
+            print("Озвучивание остановлено.")
+            return
+        if action != "status":
+            raise ValueError("Использование: /voice [status|stop]")
+        labels = {
+            "recorder": "Запись",
+            "stt": "Распознавание",
+            "tts": "Синтез",
+            "player": "Воспроизведение",
+        }
+        for key, (ok, detail) in self.voice.status().items():
+            mark = "OK" if ok else "нет"
+            print(f"{labels.get(key, key)}: {mark} — {detail}")
+
+    def _cmd_listen(self, args: list[str]) -> None:
+        try:
+            seconds = float(args[0].replace(",", ".")) if args else 5.0
+        except ValueError as exc:
+            raise ValueError("Использование: /listen [секунды]") from exc
+        if not 0.5 <= seconds <= 60:
+            raise ValueError("Длительность записи должна быть от 0.5 до 60 секунд.")
+        print(f"Запись {seconds:g} с… Ctrl+C — отмена.", flush=True)
+        try:
+            text = self.voice.record_for(seconds)
+        except KeyboardInterrupt:
+            print("Запись отменена.")
+            return
+        except VoiceError as exc:
+            print(f"Голос: {exc}", file=sys.stderr)
+            return
+        print(f"Распознано: {text}")
+        if bool(self.settings.get("voice.auto_send", True)):
+            self._handle_message(text)
+
+    def _cmd_say(self, args: list[str]) -> None:
+        text = " ".join(args).strip()
+        if not text:
+            raise ValueError("Использование: /say <текст>")
+        try:
+            self.voice.speak(text)
+        except VoiceError as exc:
+            print(f"Голос: {exc}", file=sys.stderr)
+            return
+        print("Озвучиваю. Остановить: /voice stop")
 
     def _cmd_reset(self, args: list[str]) -> None:
         mood = reset_mood(self.settings)

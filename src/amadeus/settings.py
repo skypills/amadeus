@@ -40,6 +40,20 @@ DEFAULT_SETTINGS: dict[str, dict[str, Any]] = {
         "send_history_to_cloud": False,
         "send_facts_to_cloud": False,
     },
+    "voice": {
+        "stt_command": "whisper-cli",
+        "stt_model": "~/.local/share/amadeus/models/ggml-base.bin",
+        "stt_timeout": 300,
+        "tts_command": "piper",
+        "tts_model": "~/.local/share/amadeus/models/ru_RU-irina-medium.onnx",
+        "tts_timeout": 120,
+        "recorder_command": "",
+        "player_command": "",
+        "sample_rate": 16000,
+        "language": "ru",
+        "auto_send": True,
+        "auto_speak": False,
+    },
 }
 
 DEFAULT_PERSONA = """Ты — Amadeus, персональный ИИ-ассистент пользователя на CachyOS.

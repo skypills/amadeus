@@ -39,6 +39,7 @@ class SettingsDialog(QDialog):
 
         layout = QVBoxLayout(self)
         layout.addWidget(self._build_model_group())
+        layout.addWidget(self._build_voice_group())
         layout.addWidget(self._build_personality_group())
         layout.addWidget(self._build_persona_group())
 
@@ -78,6 +79,37 @@ class SettingsDialog(QDialog):
         form.addRow("Cloud модель:", self.cloud_model_edit)
         form.addRow("Переменная ключа:", self.cloud_key_env_edit)
         form.addRow("Ключ:", self.cloud_key_status)
+        return group
+
+    def _build_voice_group(self) -> QGroupBox:
+        group = QGroupBox("Голос")
+        form = QFormLayout(group)
+        self.stt_command_edit = QLineEdit(str(self.settings.get("voice.stt_command")))
+        self.stt_model_edit = QLineEdit(str(self.settings.get("voice.stt_model")))
+        self.tts_command_edit = QLineEdit(str(self.settings.get("voice.tts_command")))
+        self.tts_model_edit = QLineEdit(str(self.settings.get("voice.tts_model")))
+        self.language_edit = QLineEdit(str(self.settings.get("voice.language", "ru")))
+        self.recorder_command_edit = QLineEdit(str(self.settings.get("voice.recorder_command")))
+        self.player_command_edit = QLineEdit(str(self.settings.get("voice.player_command")))
+        self.auto_send_check = QCheckBox("Отправлять распознанное сразу")
+        self.auto_send_check.setChecked(bool(self.settings.get("voice.auto_send", True)))
+        self.auto_speak_check = QCheckBox("Озвучивать ответы автоматически")
+        self.auto_speak_check.setChecked(bool(self.settings.get("voice.auto_speak", False)))
+
+        form.addRow("STT команда:", self.stt_command_edit)
+        form.addRow("Модель Whisper:", self.stt_model_edit)
+        form.addRow("TTS команда:", self.tts_command_edit)
+        form.addRow("Голос Piper:", self.tts_model_edit)
+        form.addRow("Язык:", self.language_edit)
+        form.addRow("Рекордер (пусто = авто):", self.recorder_command_edit)
+        form.addRow("Плеер (пусто = авто):", self.player_command_edit)
+        form.addRow("", self.auto_send_check)
+        form.addRow("", self.auto_speak_check)
+        hint = QLabel(
+            "Модели whisper.cpp и Piper не входят в пакет. Пути и установка описаны в README."
+        )
+        hint.setWordWrap(True)
+        form.addRow(hint)
         return group
 
     def _build_personality_group(self) -> QGroupBox:
@@ -162,6 +194,15 @@ class SettingsDialog(QDialog):
             "provider.cloud_base_url": self.cloud_url_edit.text().strip(),
             "provider.cloud_model": self.cloud_model_edit.text().strip(),
             "provider.cloud_api_key_env": self.cloud_key_env_edit.text().strip(),
+            "voice.stt_command": self.stt_command_edit.text().strip(),
+            "voice.stt_model": self.stt_model_edit.text().strip(),
+            "voice.tts_command": self.tts_command_edit.text().strip(),
+            "voice.tts_model": self.tts_model_edit.text().strip(),
+            "voice.language": self.language_edit.text().strip() or "ru",
+            "voice.recorder_command": self.recorder_command_edit.text().strip(),
+            "voice.player_command": self.player_command_edit.text().strip(),
+            "voice.auto_send": self.auto_send_check.isChecked(),
+            "voice.auto_speak": self.auto_speak_check.isChecked(),
             "personality.mood": self.mood_combo.currentText(),
             "personality.familiarity": self.familiarity_spin.value(),
             "personality.verbosity": self.verbosity_spin.value(),

@@ -33,6 +33,7 @@ from ..core.events import EventBus
 from ..memory import Database
 from ..settings import ConfigError, Settings
 from ..storage import paths
+from ..voice import VoiceError, VoicePipeline
 from .chat import ChatInput, ChatView, MessageBubble
 from .settings import SettingsDialog
 
@@ -105,6 +106,31 @@ class ChatWorker(QThread):
                 assistant.close()
 
 
+class VoiceWorker(QThread):
+    transcribed = Signal(str)
+    spoke = Signal(str)
+    failed = Signal(str)
+
+    def __init__(self, pipeline: VoicePipeline, mode: str, payload: str) -> None:
+        super().__init__()
+        self.pipeline = pipeline
+        self.mode = mode
+        self.payload = payload
+
+    def run(self) -> None:
+        try:
+            if self.mode == "transcribe":
+                text = self.pipeline.transcribe(Path(self.payload))
+                self.transcribed.emit(text)
+            elif self.mode == "speak":
+                path = self.pipeline.speak(self.payload)
+                self.spoke.emit(str(path))
+            else:
+                raise RuntimeError(f"Неизвестный режим голоса: {self.mode}")
+        except Exception as exc:  # noqa: BLE001 - ошибка должна попасть в UI
+            self.failed.emit(str(exc))
+
+
 class StatusWorker(QThread):
     result = Signal(bool, str, object)
 
@@ -127,10 +153,14 @@ class MainWindow(QMainWindow):
         assistant: Assistant,
         settings: Settings,
         auto_status: bool = True,
+        voice_pipeline: VoicePipeline | None = None,
     ) -> None:
         super().__init__()
         self.assistant = assistant
         self.settings = settings
+        self.voice = voice_pipeline or VoicePipeline(settings)
+        self._voice_status: dict[str, tuple[bool, str]] = {}
+        self._voice_worker: VoiceWorker | None = None
         self._worker: ChatWorker | None = None
         self._status_worker: StatusWorker | None = None
         self._stream_bubble: MessageBubble | None = None
@@ -148,6 +178,7 @@ class MainWindow(QMainWindow):
         self._load_session(self.assistant.session_id)
         self._refresh_history()
         self._refresh_facts()
+        self._refresh_voice_status()
 
         self._status_timer = QTimer(self)
         self._status_timer.setInterval(60_000)
@@ -155,6 +186,11 @@ class MainWindow(QMainWindow):
         if auto_status:
             self._status_timer.start()
             QTimer.singleShot(0, self._refresh_status)
+
+        self._voice_timer = QTimer(self)
+        self._voice_timer.setInterval(500)
+        self._voice_timer.timeout.connect(self._update_voice_buttons)
+        self._voice_timer.start()
 
     def _build_ui(self) -> None:
         central = QWidget()
@@ -164,6 +200,26 @@ class MainWindow(QMainWindow):
 
         self.chat = ChatView()
         layout.addWidget(self.chat, 1)
+
+        voice_row = QHBoxLayout()
+        self.record_button = QPushButton("Записать")
+        self.record_button.clicked.connect(self._toggle_recording)
+        self.cancel_record_button = QPushButton("Отменить запись")
+        self.cancel_record_button.setEnabled(False)
+        self.cancel_record_button.clicked.connect(self._cancel_recording)
+        self.speak_button = QPushButton("Озвучить")
+        self.speak_button.clicked.connect(self._speak_last)
+        self.stop_speak_button = QPushButton("Стоп TTS")
+        self.stop_speak_button.setEnabled(False)
+        self.stop_speak_button.clicked.connect(self._stop_speaking)
+        self.voice_status_label = QLabel()
+        voice_row.addWidget(self.record_button)
+        voice_row.addWidget(self.cancel_record_button)
+        voice_row.addWidget(self.speak_button)
+        voice_row.addWidget(self.stop_speak_button)
+        voice_row.addStretch(1)
+        voice_row.addWidget(self.voice_status_label)
+        layout.addLayout(voice_row)
 
         row = QHBoxLayout()
         self.input = ChatInput()
@@ -246,7 +302,7 @@ class MainWindow(QMainWindow):
 
         self.status_label = QLabel("Модель: проверка…")
         self.cloud_label = QLabel()
-        self.mic_label = QLabel("Микрофон: не подключён (этап 4)")
+        self.mic_label = QLabel("Микрофон: проверка…")
         self.statusBar().addPermanentWidget(self.cloud_label)
         self.statusBar().addPermanentWidget(self.mic_label)
         self.statusBar().addPermanentWidget(self.status_label)
@@ -305,6 +361,7 @@ class MainWindow(QMainWindow):
         self.new_button.setEnabled(not busy)
         self.delete_session_button.setEnabled(not busy)
         self.history_search.setEnabled(not busy)
+        self._update_voice_buttons()
         if not busy:
             self.input.setFocus()
 
@@ -356,6 +413,10 @@ class MainWindow(QMainWindow):
         self._finish_generation()
         self._refresh_history()
         self._refresh_status()
+        tts_ok = self._voice_status.get("tts", (False, ""))[0]
+        player_ok = self._voice_status.get("player", (False, ""))[0]
+        if bool(self.settings.get("voice.auto_speak", False)) and tts_ok and player_ok:
+            self._speak_text(answer)
         self._maybe_remember(self._last_user_text)
 
     def _on_failed(self, message: str) -> None:
@@ -416,6 +477,142 @@ class MainWindow(QMainWindow):
         else:
             self.assistant.reject_proposal(proposal.id)
         self._refresh_facts()
+
+    def _refresh_voice_status(self) -> None:
+        try:
+            self._voice_status = self.voice.status()
+        except Exception as exc:  # noqa: BLE001 - статус не должен ронять окно
+            self._voice_status = {"stt": (False, str(exc))}
+        details = "; ".join(detail for _, detail in self._voice_status.values())
+        recorder_ok = self._voice_status.get("recorder", (False, ""))[0]
+        stt_ok = self._voice_status.get("stt", (False, ""))[0]
+        tts_ok = self._voice_status.get("tts", (False, ""))[0]
+        player_ok = self._voice_status.get("player", (False, ""))[0]
+        microphone_ready = recorder_ok and stt_ok
+        speech_ready = tts_ok and player_ok
+        self.mic_label.setText("Микрофон: готов" if microphone_ready else "Микрофон: не настроен")
+        self.mic_label.setToolTip(details)
+        if microphone_ready and speech_ready:
+            self.voice_status_label.setText("Голос: готов")
+        elif microphone_ready:
+            self.voice_status_label.setText("Голос: микрофон готов, TTS не настроен")
+        elif speech_ready:
+            self.voice_status_label.setText("Голос: TTS готов, микрофон не настроен")
+        else:
+            self.voice_status_label.setText("Голос: не настроен")
+        self.voice_status_label.setToolTip(details)
+        self._update_voice_buttons()
+
+    def _update_voice_buttons(self) -> None:
+        if not hasattr(self, "record_button"):
+            return
+        recorder_ok = self._voice_status.get("recorder", (False, ""))[0]
+        stt_ok = self._voice_status.get("stt", (False, ""))[0]
+        tts_ok = self._voice_status.get("tts", (False, ""))[0]
+        player_ok = self._voice_status.get("player", (False, ""))[0]
+        recording = self.voice.recording
+        voice_worker_busy = self._voice_worker is not None and self._voice_worker.isRunning()
+        self.record_button.setEnabled(
+            not self._busy and not voice_worker_busy and (recording or (recorder_ok and stt_ok))
+        )
+        self.record_button.setText("Стоп (запись)" if recording else "Записать")
+        self.cancel_record_button.setEnabled(recording)
+        self.speak_button.setEnabled(
+            not self._busy and not voice_worker_busy and not recording and tts_ok and player_ok
+        )
+        self.stop_speak_button.setEnabled(self.voice.player.is_playing)
+
+    def _toggle_recording(self) -> None:
+        if self._busy:
+            return
+        if self.voice.recording:
+            self._stop_recording()
+            return
+        try:
+            self.voice.start_recording()
+        except VoiceError as exc:
+            QMessageBox.warning(self, "Запись", str(exc))
+            self._refresh_voice_status()
+            return
+        self.mic_label.setText("Микрофон: запись…")
+        self.statusBar().showMessage("Идёт запись. Нажмите «Стоп (запись)».", 0)
+        self._update_voice_buttons()
+
+    def _stop_recording(self) -> None:
+        try:
+            path = self.voice.finish_recording()
+        except VoiceError as exc:
+            QMessageBox.warning(self, "Запись", str(exc))
+            self._refresh_voice_status()
+            return
+        self.mic_label.setText("Микрофон: распознавание…")
+        self.statusBar().showMessage("Распознаю речь…", 0)
+        self._start_voice_worker("transcribe", str(path))
+
+    def _cancel_recording(self) -> None:
+        self.voice.cancel_recording()
+        self.statusBar().showMessage("Запись отменена.", 8000)
+        self._refresh_voice_status()
+
+    def _start_voice_worker(self, mode: str, payload: str) -> None:
+        if self._voice_worker is not None and self._voice_worker.isRunning():
+            return
+        worker = VoiceWorker(self.voice, mode, payload)
+        worker.transcribed.connect(self._on_transcribed)
+        worker.spoke.connect(self._on_spoke)
+        worker.failed.connect(self._on_voice_failed)
+        worker.finished.connect(lambda: self._on_voice_worker_finished(worker))
+        self._voice_worker = worker
+        worker.start()
+        self._update_voice_buttons()
+
+    def _on_transcribed(self, text: str) -> None:
+        self.statusBar().showMessage(f"Распознано: {text}", 10_000)
+        self.input.setPlainText(text)
+        self.input.setFocus()
+        if bool(self.settings.get("voice.auto_send", True)) and text.strip():
+            QTimer.singleShot(0, self._send)
+
+    def _on_spoke(self, path: str) -> None:
+        self.statusBar().showMessage("Озвучивание…", 8000)
+        self._update_voice_buttons()
+
+    def _on_voice_failed(self, message: str) -> None:
+        self.statusBar().showMessage(f"Голос: {message}", 15_000)
+        self._refresh_voice_status()
+        self.input.setFocus()
+
+    def _on_voice_worker_finished(self, worker: VoiceWorker) -> None:
+        if self._voice_worker is worker:
+            self._voice_worker = None
+        worker.deleteLater()
+        self._refresh_voice_status()
+
+    def _speak_text(self, text: str) -> None:
+        if not text.strip():
+            return
+        tts_ok = self._voice_status.get("tts", (False, ""))[0]
+        player_ok = self._voice_status.get("player", (False, ""))[0]
+        if not (tts_ok and player_ok):
+            self.statusBar().showMessage("TTS не настроен. Проверьте настройки голоса.", 10_000)
+            return
+        if self._voice_worker is not None and self._voice_worker.isRunning():
+            return
+        self.statusBar().showMessage("Синтез речи…", 0)
+        self._start_voice_worker("speak", text)
+
+    def _speak_last(self) -> None:
+        messages = self.assistant.history.messages(self.assistant.session_id, limit=50)
+        answer = next((m.content for m in reversed(messages) if m.role == "assistant"), None)
+        if answer is None:
+            self.statusBar().showMessage("В текущей сессии ещё нет ответа Amadeus.", 8000)
+            return
+        self._speak_text(answer)
+
+    def _stop_speaking(self) -> None:
+        self.voice.stop_speaking()
+        self.statusBar().showMessage("Озвучивание остановлено.", 8000)
+        self._update_voice_buttons()
 
     def _load_session(self, session_id: int) -> None:
         if not self.assistant.resume(session_id):
@@ -644,8 +841,17 @@ class MainWindow(QMainWindow):
             self.cloud_label.setText("Провайдер: локальный")
 
     def _open_settings(self) -> None:
+        if self.voice.recording:
+            QMessageBox.warning(self, "Настройки", "Сначала остановите запись.")
+            return
+        if self._voice_worker is not None and self._voice_worker.isRunning():
+            QMessageBox.warning(self, "Настройки", "Дождитесь завершения голосовой операции.")
+            return
         dialog = SettingsDialog(self.settings, self.assistant.persona_path, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.voice.close()
+            self.voice = VoicePipeline(self.settings)
+            self._refresh_voice_status()
             self._update_cloud_label()
             self._refresh_status()
             self.statusBar().showMessage("Настройки сохранены.", 8000)
@@ -686,7 +892,7 @@ class MainWindow(QMainWindow):
             "Об Amadeus",
             f"Amadeus {__version__}\n\n"
             "Локальный ИИ-ассистент для CachyOS.\n"
-            "Текстовое ядро, память и GUI на PySide6.\n\n"
+            "Текстовое ядро, память, GUI на PySide6 и локальный голос.\n\n"
             f"Данные: {paths.data_dir()}",
         )
 
@@ -713,6 +919,20 @@ class MainWindow(QMainWindow):
             if not self._status_worker.wait(6000):
                 self._status_worker.terminate()
                 self._status_worker.wait(1000)
+        if self.voice.recording:
+            self.voice.cancel_recording()
+        self.voice.stop_speaking()
+        if self._voice_worker is not None and self._voice_worker.isRunning():
+            if not self._voice_worker.wait(10_000):
+                QMessageBox.warning(
+                    self,
+                    "Голос",
+                    "Голосовая операция ещё выполняется. Дождитесь её завершения.",
+                )
+                event.ignore()
+                return
+        self.voice.close()
+        self._voice_timer.stop()
         self._status_timer.stop()
         event.accept()
 
