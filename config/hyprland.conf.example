@@ -1,6 +1,8 @@
 # Добавьте в ~/.config/hypr/hyprland.conf
 # Горячий вызов GUI (не глобальный перехват клавиш приложением).
 bind = SUPER, A, exec, amadeus-gui
+# Автозапуск после входа (необязательно):
+# exec-once = amadeus-gui
 
 # Удобное окно Amadeus.
 # Для старых версий Hyprland замените windowrule на windowrulev2.

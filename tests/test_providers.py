@@ -213,3 +213,16 @@ def test_cloud_parses_streamed_tool_calls(monkeypatch):
     messages = provider.format_tool_messages(result, [(call, "ok")])
     assert messages[0]["tool_calls"][0]["id"] == "call_1"
     assert messages[1]["tool_call_id"] == "call_1"
+
+
+def test_ollama_connection_error_has_hint(monkeypatch):
+    import urllib.error
+
+    provider = OllamaProvider()
+
+    def fail(request, timeout):
+        raise urllib.error.URLError(ConnectionRefusedError("refused"))
+
+    monkeypatch.setattr("urllib.request.urlopen", fail)
+    with pytest.raises(ProviderConnectionError, match="ollama serve"):
+        provider.chat([{"role": "user", "content": "hi"}])

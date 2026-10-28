@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 from .. import __version__
 from ..core.assistant import Assistant
 from ..core.events import EventBus
+from ..logging_setup import configure_logging
 from ..memory import Database
 from ..security import PermissionDenied
 from ..settings import ConfigError, Settings
@@ -1057,6 +1058,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    logger = configure_logging()
+    logger.info("GUI start version=%s", __version__)
     app = QApplication(sys.argv[:1])
     app.setApplicationName("Amadeus")
     app.setApplicationDisplayName("Amadeus")

@@ -10,6 +10,13 @@ from pathlib import Path
 from . import __version__
 from .core.assistant import Assistant, AssistantError
 from .core.events import Event
+from .diagnostics import (
+    DiagnosticsError,
+    format_benchmark,
+    run_benchmark,
+    save_benchmark,
+)
+from .logging_setup import configure_logging
 from .memory import Database, FactProposal
 from .personality import MOODS, load_mood, reset_mood, set_mood, set_parameter
 from .providers import OllamaProvider
@@ -721,17 +728,47 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--once", metavar="ТЕКСТ", help="отправить одно сообщение и выйти")
     parser.add_argument("--no-stream", action="store_true", help="отключить потоковый вывод")
     parser.add_argument("--status", action="store_true", help="проверить доступность провайдера")
+    parser.add_argument("--diagnose", action="store_true", help="диагностика системы и настроек")
+    parser.add_argument("--benchmark", action="store_true", help="замерить скорость модели")
+    parser.add_argument(
+        "--benchmark-prompt",
+        default="Кратко объясни, что такое Wayland.",
+        help="промпт для benchmark",
+    )
+    parser.add_argument("--benchmark-out", type=Path, help="сохранить benchmark в JSON")
     parser.add_argument("--version", action="version", version=f"Amadeus {__version__}")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    logger = configure_logging()
+    logger.info("CLI start version=%s", __version__)
     try:
         settings = Settings.load(args.config)
     except ConfigError as exc:
+        logger.error("config error: %s", exc)
         print(f"Ошибка конфигурации: {exc}", file=sys.stderr)
         return 2
+
+    if args.diagnose:
+        from .diagnostics import diagnose
+
+        print(diagnose(settings))
+        return 0
+
+    if args.benchmark:
+        try:
+            result = run_benchmark(settings, prompt=args.benchmark_prompt)
+        except DiagnosticsError as exc:
+            logger.error("benchmark error: %s", exc)
+            print(f"Ошибка benchmark: {exc}", file=sys.stderr)
+            return 1
+        print(format_benchmark(result))
+        if args.benchmark_out:
+            target = save_benchmark(result, args.benchmark_out)
+            print(f"Сохранено: {target}")
+        return 0
 
     if args.model:
         settings.set("ollama.model", args.model)

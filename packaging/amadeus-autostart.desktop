@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Amadeus
+Comment=Локальный ИИ-ассистент
+Exec=amadeus-gui
+Terminal=false
+X-GNOME-Autostart-enabled=true
