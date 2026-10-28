@@ -1,0 +1,167 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+from ..memory import Database, Facts, History, MemoryContext, Retrieval
+from ..memory.history import Message
+from ..personality import build_system_prompt, load_mood, load_persona
+from ..providers import ChunkCallback, ProviderError
+from ..providers.base import ProviderStatus
+from ..settings import Settings
+from ..storage import paths
+from .context import build_messages
+from .events import EventBus
+from .router import Router
+
+
+class AssistantError(RuntimeError):
+    pass
+
+
+class Assistant:
+    def __init__(
+        self,
+        settings: Settings,
+        db: Database | None = None,
+        events: EventBus | None = None,
+        persona_path: Path | None = None,
+    ) -> None:
+        self.settings = settings
+        self.db = db or Database()
+        self.events = events or EventBus()
+        self.history = History(self.db)
+        self.facts = Facts(self.db)
+        self.retrieval = Retrieval(self.history, self.facts)
+        self.router = Router(settings)
+        self.persona_path = persona_path or paths.persona_path()
+        self._session_id: int | None = None
+
+    @property
+    def session_id(self) -> int:
+        if self._session_id is None:
+            latest = self.history.latest_session()
+            self._session_id = int(latest["id"]) if latest else self.history.create_session()
+        return self._session_id
+
+    def new_session(self) -> int:
+        self._session_id = self.history.create_session()
+        return self._session_id
+
+    def resume(self, session_id: int) -> bool:
+        if self.history.get_session(session_id) is None:
+            return False
+        self._session_id = session_id
+        return True
+
+    def detach_session(self) -> None:
+        self._session_id = None
+
+    def provider_status(self) -> ProviderStatus:
+        try:
+            provider = self.router.selected()
+        except ProviderError as exc:
+            return ProviderStatus(False, str(exc))
+        return provider.status()
+
+    def _memory_context(
+        self, user_text: str, provider_name: str
+    ) -> tuple[list[Message], MemoryContext]:
+        session_id = self.session_id
+        limit = int(self.settings.get("generation.history_limit", 20))
+        memory_limit = int(self.settings.get("generation.memory_limit", 5))
+        include_history = True
+        include_facts = True
+        if provider_name == "cloud":
+            include_history = bool(self.settings.get("privacy.send_history_to_cloud", False))
+            include_facts = bool(self.settings.get("privacy.send_facts_to_cloud", False))
+        history = self.history.messages(session_id, limit=limit if include_history else 1)
+        context = MemoryContext()
+        if include_history or include_facts:
+            gathered = self.retrieval.gather(
+                user_text,
+                limit=memory_limit,
+                exclude_session=session_id,
+                include_facts=include_facts,
+            )
+            context = MemoryContext(
+                facts=gathered.facts if include_facts else (),
+                messages=gathered.messages if include_history else (),
+            )
+        return history, context
+
+    def _build_request(self, user_text: str, provider_name: str) -> list[dict[str, str]]:
+        history, memory = self._memory_context(user_text, provider_name)
+        mood = load_mood(self.settings)
+        persona = load_persona(self.persona_path)
+        memory_block = self.retrieval.render(memory)
+        system_prompt = build_system_prompt(
+            self.settings,
+            persona,
+            mood=mood,
+            cloud=provider_name == "cloud",
+        )
+        return build_messages(system_prompt, history, memory_block=memory_block)
+
+    def respond(
+        self,
+        user_text: str,
+        stream: bool = True,
+        on_chunk: ChunkCallback | None = None,
+    ) -> str:
+        user_text = user_text.strip()
+        if not user_text:
+            raise AssistantError("Пустое сообщение.")
+        try:
+            provider = self.router.selected()
+        except ProviderError as exc:
+            raise AssistantError(str(exc)) from exc
+
+        session_id = self.session_id
+        self.history.add_message(session_id, "user", user_text)
+
+        if provider.name == "cloud":
+            self._notify_cloud()
+
+        messages = self._build_request(user_text, provider.name)
+        produced: list[str] = []
+
+        def emit(chunk: str) -> None:
+            produced.append(chunk)
+            if on_chunk is not None:
+                on_chunk(chunk)
+
+        try:
+            answer = provider.chat(messages, stream=stream, on_chunk=emit)
+        except ProviderError as exc:
+            if provider.name == "ollama" and not produced and self.router.can_fallback():
+                self.events.emit(
+                    "fallback",
+                    "Локальная модель недоступна, переключаюсь на облачный резерв. "
+                    "Запрос будет отправлен в интернет.",
+                )
+                cloud = self.router.cloud_provider()
+                self._notify_cloud()
+                cloud_messages = self._build_request(user_text, "cloud")
+                try:
+                    answer = cloud.chat(cloud_messages, stream=stream, on_chunk=emit)
+                except ProviderError as cloud_exc:
+                    raise AssistantError(
+                        f"Локальная модель недоступна: {exc}. "
+                        f"Облачный резерв тоже не сработал: {cloud_exc}"
+                    ) from cloud_exc
+            else:
+                raise AssistantError(str(exc)) from exc
+
+        if not answer.strip():
+            raise AssistantError("Модель вернула пустой ответ.")
+        self.history.add_message(session_id, "assistant", answer)
+        return answer
+
+    def _notify_cloud(self) -> None:
+        self.events.emit(
+            "cloud",
+            "Облачный режим: запрос и разрешённый контекст отправляются в интернет.",
+        )
+
+    def close(self) -> None:
+        self.db.close()

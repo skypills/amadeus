@@ -1,0 +1,291 @@
+# Amadeus
+
+Локальный ИИ-ассистент для CachyOS, вдохновлённый Amadeus из «Врат Штейна».
+Это **этап 1** по ТЗ: работающее текстовое ядро и CLI. GUI, голос, инструменты
+и веб-поиск появятся на следующих этапах, но архитектура уже разделена на слои.
+
+## Что уже работает
+
+- диалог с локальной моделью Ollama на русском языке;
+- потоковый вывод ответа;
+- история диалогов в SQLite, переживает перезапуск;
+- поиск по истории (SQLite FTS5, с fallback на `LIKE`);
+- долговременные факты о пользователе с ручным подтверждением;
+- редактируемая персона и настроение (`mood`, `familiarity`, `verbosity`, `initiative`);
+- опциональный облачный провайдер (OpenAI-совместимый API) с явным включением;
+- автоматический резерв на облако только при разрешении и только с уведомлением;
+- фильтрация контекста для облака (история и факты не отправляются без разрешения);
+- allowlist инструментов и проверка рискованных действий (задел на этап 5);
+- понятные ошибки при недоступности Ollama, модели или сети.
+
+## Требования
+
+- CachyOS / Arch Linux, Wayland или X11 (для CLI не важно);
+- Python 3.12+;
+- Ollama (локальный провайдер);
+- 8–16 ГБ ОЗУ; для 16 ГБ начните с модели 3B–4B в квантовании.
+
+## Установка
+
+### 1. Ollama и модель
+
+Проверьте пакет в репозиториях и установите удобным способом:
+
+```bash
+pacman -Ss ollama
+sudo pacman -S ollama          # или ollama-cuda / ollama-rocm, если есть GPU
+sudo systemctl enable --now ollama
+# вариант без systemd:
+# ollama serve
+```
+
+Скачайте instruct-модель (пример для 16 ГБ):
+
+```bash
+ollama pull qwen2.5:3b-instruct
+ollama list
+```
+
+Если у вас больше свободной памяти, можно попробовать 7B–8B:
+
+```bash
+ollama pull qwen2.5:7b-instruct
+amadeus --model qwen2.5:7b-instruct
+```
+
+### 2. Виртуальное окружение
+
+```bash
+cd ~/amadeus
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -e ".[dev]"
+```
+
+### 3. Запуск
+
+```bash
+amadeus
+# или без активации venv:
+./.venv/bin/amadeus
+```
+
+При первом запуске создаются:
+
+```
+~/.config/amadeus/settings.toml
+~/.config/amadeus/persona.md
+~/.local/share/amadeus/amadeus.db
+~/.local/state/amadeus/
+```
+
+Проверка окружения:
+
+```bash
+amadeus --status
+amadeus --once "Привет, проверка связи"
+```
+
+## Команды CLI
+
+| Команда | Назначение |
+|---|---|
+| `/help` | справка |
+| `/exit`, `/quit` | выход |
+| `/new` | новая сессия |
+| `/sessions [N]` | список сессий |
+| `/resume <id>` | продолжить сессию |
+| `/history [N]` | сообщения текущей сессии |
+| `/search <запрос>` | поиск по всей истории |
+| `/delete <id\|all>` | удалить сессию или всё |
+| `/fact add <текст>` | сохранить подтверждённый факт |
+| `/facts` | список фактов |
+| `/fact del <id>` | удалить факт |
+| `/fact clear` | удалить все факты |
+| `/model [имя]` | показать/сменить модель |
+| `/provider [ollama\|cloud]` | показать/выбрать провайдера |
+| `/cloud on\|off` | разрешить/запретить облако |
+| `/stream on\|off` | потоковый вывод |
+| `/mood [настроение]` | `calm`, `friendly`, `technical`, `supportive` |
+| `/reset` | сбросить характер |
+| `/persona [edit]` | показать/редактировать персону |
+| `/settings` | текущие настройки |
+| `/status` | доступность провайдера |
+| `/config` | пути конфигурации и данных |
+| `/clear` | очистить экран |
+
+Примеры запуска:
+
+```bash
+amadeus --new
+amadeus --session 3
+amadeus --once "Объясни, что такое Wayland"
+amadeus --model qwen2.5:7b-instruct --no-stream
+amadeus --config /path/to/settings.toml
+```
+
+## Настройки
+
+Основной файл — `~/.config/amadeus/settings.toml`. Он создаётся из шаблона
+`config/settings.toml`. Менять можно вручную или командами CLI.
+
+Ключевые параметры:
+
+```toml
+[provider]
+name = "ollama"            # ollama | cloud
+allow_cloud = false        # облако по умолчанию запрещено
+cloud_fallback = true      # резерв при недоступности Ollama (если разрешён)
+
+[ollama]
+base_url = "http://127.0.0.1:11434"
+model = "qwen2.5:3b-instruct"
+timeout = 120
+stream = true
+
+[generation]
+temperature = 0.7
+top_p = 0.9
+max_tokens = 512
+history_limit = 20
+memory_limit = 5
+
+[privacy]
+send_history_to_cloud = false
+send_facts_to_cloud = false
+```
+
+Персона хранится в `~/.config/amadeus/persona.md` и подмешивается в системный
+промпт. Изменения применяются со следующего ответа.
+
+## Облачный резерв (опционально)
+
+По умолчанию всё работает локально. Облако включается только явно:
+
+```bash
+export AMADEUS_CLOUD_API_KEY="..."   # или положите в .env своего shell
+```
+
+Затем в CLI:
+
+```
+/provider cloud
+```
+
+Или в `settings.toml`:
+
+```toml
+[provider]
+name = "cloud"
+allow_cloud = true
+cloud_base_url = "https://api.openai.com/v1"
+cloud_model = "gpt-4o-mini"
+cloud_api_key_env = "AMADEUS_CLOUD_API_KEY"
+```
+
+Важно:
+
+- ключ не хранится в репозитории и не пишется в логи;
+- при выборе облака CLI сообщает о передаче данных;
+- история и факты не уходят в облако, пока не включены
+  `privacy.send_history_to_cloud` и `privacy.send_facts_to_cloud`;
+- при ошибке локальной модели резерв срабатывает только если облако разрешено,
+  ключ найден и `cloud_fallback = true`; пользователь получает уведомление.
+
+## Тесты
+
+```bash
+source .venv/bin/activate
+pytest
+```
+
+Покрыты память, настройки, провайдеры, маршрутизация, приватность контекста
+и разрешения инструментов.
+
+## Диагностика оборудования
+
+Перед выбором модели полезно собрать данные:
+
+```bash
+free -h
+lscpu | grep -E 'Model name|CPU\(s\)'
+lspci | grep -Ei 'VGA|3D|Display'
+```
+
+## Типичные проблемы
+
+**`Connection refused` / Ollama недоступна**
+
+```bash
+systemctl status ollama
+sudo systemctl start ollama
+# или вручную:
+ollama serve
+amadeus --status
+```
+
+**Модель не найдена**
+
+```bash
+ollama pull qwen2.5:3b-instruct
+# имя должно совпадать с [ollama].model
+ollama list
+```
+
+**Не хватает памяти**
+
+Уменьшите модель (3B вместо 7B), `max_tokens` и `history_limit`; закройте
+тяжёлые приложения. Не запускайте несколько LLM одновременно.
+
+**Нет русского голоса/микрофона**
+
+Голосовой этап ещё не реализован. Он появится после стабилизации CLI.
+
+**Где лежат данные**
+
+```
+amadeus --config  # покажет актуальные пути
+```
+
+Удалить историю и факты: `/delete all`. Удалить только факты: `/fact clear`.
+
+## Структура проекта
+
+```
+amadeus/
+├── pyproject.toml
+├── config/                  # шаблоны settings.toml и persona.md
+├── src/amadeus/
+│   ├── cli.py               # интерфейс командной строки
+│   ├── core/                # ядро, маршрутизация, события, контекст
+│   ├── providers/           # Ollama и облачный OpenAI-совместимый провайдер
+│   ├── memory/              # SQLite, история, факты, retrieval
+│   ├── personality/         # промпт, настроение
+│   ├── security/            # политика разрешений
+│   ├── tools/               # реестр allowlist-инструментов
+│   ├── storage/             # пути platformdirs
+│   ├── voice/               # задел на этап 4
+│   └── ui/                  # задел на этап 3
+├── tests/
+└── docs/
+```
+
+## Этапы по ТЗ
+
+- [x] Этап 1 — текстовое ядро: CLI, Ollama, промпт, SQLite, история, ошибки.
+- [ ] Этап 2 — расширенная память и личность.
+- [ ] Этап 3 — GUI на PySide6.
+- [ ] Этап 4 — голос (STT/TTS).
+- [ ] Этап 5 — системные инструменты и подтверждения.
+- [ ] Этап 6 — веб-поиск и облачный резерв.
+- [ ] Этап 7 — стабилизация и документация установки.
+
+Часть заделов этапов 2, 5 и 6 уже заложена в коде (факты, allowlist,
+облачный провайдер), но полноценные интерфейсы появятся позже.
+
+## Безопасность
+
+Модель не получает произвольный shell. Инструменты выполняются только через
+реестр с allowlist и проверкой риска. Опасные действия требуют подтверждения.
+Подробнее — `docs/security.md`.

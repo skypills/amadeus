@@ -1,0 +1,30 @@
+[provider]
+name = "ollama"
+allow_cloud = false
+cloud_base_url = "https://api.openai.com/v1"
+cloud_model = "gpt-4o-mini"
+cloud_api_key_env = "AMADEUS_CLOUD_API_KEY"
+cloud_fallback = true
+
+[ollama]
+base_url = "http://127.0.0.1:11434"
+model = "qwen2.5:3b-instruct"
+timeout = 120
+stream = true
+
+[generation]
+temperature = 0.7
+top_p = 0.9
+max_tokens = 512
+history_limit = 20
+memory_limit = 5
+
+[personality]
+mood = "calm"
+familiarity = 0.4
+verbosity = 0.5
+initiative = 0.3
+
+[privacy]
+send_history_to_cloud = false
+send_facts_to_cloud = false
