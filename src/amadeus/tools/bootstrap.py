@@ -5,6 +5,13 @@ from ..settings import Settings
 from .applications import application_tool
 from .notifications import notification_tool
 from .registry import ToolRegistry
+from .system_actions import (
+    clipboard_tool,
+    media_tool,
+    open_url_tool,
+    screenshot_tool,
+    volume_tools,
+)
 from .system_info import system_info_tool
 from .web_search import web_search_tool
 
@@ -26,4 +33,11 @@ def build_registry(settings: Settings | None = None) -> ToolRegistry:
     registry.register(application_tool(policy))
     registry.register(system_info_tool())
     registry.register(web_search_tool(settings))
+    registry.register(clipboard_tool())
+    registry.register(screenshot_tool())
+    get_volume_tool, set_volume_tool = volume_tools()
+    registry.register(get_volume_tool)
+    registry.register(set_volume_tool)
+    registry.register(media_tool())
+    registry.register(open_url_tool())
     return registry

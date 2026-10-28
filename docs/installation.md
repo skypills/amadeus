@@ -79,6 +79,23 @@ amadeus
 Подробные команды и ссылки на модели — в разделе «Голос» в `README.md`.
 Голос не обязателен: без него работают чат, память, инструменты и веб-поиск.
 
+## 5.1. Системные действия (опционально)
+
+Для действий из GUI/CLI установите по необходимости:
+
+```bash
+sudo pacman -S wl-clipboard grim wireplumber playerctl xdg-utils
+```
+
+- `wl-copy` — буфер обмена Wayland;
+- `grim` — скриншоты Wayland (альтернативы: spectacle, gnome-screenshot, scrot);
+- `wpctl` — громкость (wireplumber);
+- `playerctl` — управление медиаплеером;
+- `xdg-open` — открытие ссылок.
+
+Скриншоты сохраняются в `~/.local/share/amadeus/screenshots/` и требуют
+подтверждения. Скриншот и открытие URL не вызываются моделью автоматически.
+
 ## 6. Горячий вызов и автозапуск GUI
 
 Hyprland:

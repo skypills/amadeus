@@ -401,6 +401,32 @@ class MainWindow(QMainWindow):
         tools_menu.addAction(sysinfo_action)
         tools_menu.addAction(notify_action)
         tools_menu.addAction(open_action)
+        tools_menu.addSeparator()
+        system_menu = tools_menu.addMenu("Системные действия")
+        copy_action = QAction("Скопировать последний ответ", self)
+        copy_action.triggered.connect(self._copy_last_answer)
+        screenshot_action = QAction("Скриншот", self)
+        screenshot_action.triggered.connect(self._take_screenshot)
+        volume_action = QAction("Громкость…", self)
+        volume_action.triggered.connect(self._set_volume_dialog)
+        media_menu = system_menu.addMenu("Медиа")
+        for label, action_name in (
+            ("Play/Pause", "play-pause"),
+            ("Следующий", "next"),
+            ("Предыдущий", "previous"),
+            ("Стоп", "stop"),
+        ):
+            action = QAction(label, self)
+            action.triggered.connect(
+                lambda _checked=False, name=action_name: self._media_action(name)
+            )
+            media_menu.addAction(action)
+        url_action = QAction("Открыть URL…", self)
+        url_action.triggered.connect(self._open_url_dialog)
+        system_menu.addAction(copy_action)
+        system_menu.addAction(screenshot_action)
+        system_menu.addAction(volume_action)
+        system_menu.addAction(url_action)
 
         settings_menu = self.menuBar().addMenu("Настройки")
         prefs_action = QAction("Параметры…", self)
@@ -1044,6 +1070,74 @@ class MainWindow(QMainWindow):
             )
         except (ToolError, PermissionDenied, OSError) as exc:
             QMessageBox.critical(self, "Приложения", str(exc))
+            return
+        self.statusBar().showMessage(result, 8000)
+
+    def _last_assistant_text(self) -> str | None:
+        messages = self.assistant.history.messages(self.assistant.session_id, limit=50)
+        return next((m.content for m in reversed(messages) if m.role == "assistant"), None)
+
+    def _copy_last_answer(self) -> None:
+        text = self._last_assistant_text()
+        if not text:
+            self.statusBar().showMessage("В сессии ещё нет ответа Amadeus.", 8000)
+            return
+        try:
+            result = self.assistant.tools.execute("copy_clipboard", {"text": text}, confirmed=True)
+        except (ToolError, PermissionDenied, OSError) as exc:
+            QMessageBox.critical(self, "Буфер обмена", str(exc))
+            return
+        self.statusBar().showMessage(result, 8000)
+
+    def _take_screenshot(self) -> None:
+        if (
+            QMessageBox.question(self, "Скриншот", "Сделать скриншот экрана?")
+            != QMessageBox.StandardButton.Yes
+        ):
+            return
+        try:
+            result = self.assistant.tools.execute("screenshot", {}, confirmed=True)
+        except (ToolError, PermissionDenied, OSError) as exc:
+            QMessageBox.critical(self, "Скриншот", str(exc))
+            return
+        QMessageBox.information(self, "Скриншот", result)
+
+    def _set_volume_dialog(self) -> None:
+        percent, ok = QInputDialog.getInt(self, "Громкость", "Процентов (0–150):", 50, 0, 150, 5)
+        if not ok:
+            return
+        try:
+            result = self.assistant.tools.execute(
+                "set_volume", {"percent": percent}, confirmed=True
+            )
+        except (ToolError, PermissionDenied, OSError) as exc:
+            QMessageBox.critical(self, "Громкость", str(exc))
+            return
+        self.statusBar().showMessage(result, 8000)
+
+    def _media_action(self, action: str) -> None:
+        try:
+            result = self.assistant.tools.execute(
+                "media_control", {"action": action}, confirmed=True
+            )
+        except (ToolError, PermissionDenied, OSError) as exc:
+            QMessageBox.critical(self, "Медиа", str(exc))
+            return
+        self.statusBar().showMessage(result, 8000)
+
+    def _open_url_dialog(self) -> None:
+        url, ok = QInputDialog.getText(self, "Открыть URL", "http/https URL:")
+        if not ok or not url.strip():
+            return
+        if (
+            QMessageBox.question(self, "Открыть URL", f"Открыть {url.strip()}?")
+            != QMessageBox.StandardButton.Yes
+        ):
+            return
+        try:
+            result = self.assistant.tools.execute("open_url", {"url": url.strip()}, confirmed=True)
+        except (ToolError, PermissionDenied, OSError) as exc:
+            QMessageBox.critical(self, "Открыть URL", str(exc))
             return
         self.statusBar().showMessage(result, 8000)
 

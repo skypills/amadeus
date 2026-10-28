@@ -67,6 +67,11 @@ HELP_TEXT = """\
   /sysinfo                  системная информация
   /notify <текст>           отправить уведомление
   /open <app> [аргументы]   запустить приложение из allowlist
+  /copy [текст]             скопировать текст или последний ответ
+  /screenshot               сделать скриншот экрана
+  /volume [0-150]           показать или изменить громкость
+  /media <action>           play-pause, next, previous, stop
+  /openurl <url>            открыть http/https ссылку
   /web <запрос>             поиск в интернете и ответ по источникам
   /character [reset]        показать или сбросить характер
   /reset                    сбросить настроение и параметры стиля
@@ -266,6 +271,11 @@ class ChatCLI:
             "/sysinfo": self._cmd_sysinfo,
             "/notify": self._cmd_notify,
             "/open": self._cmd_open,
+            "/copy": self._cmd_copy,
+            "/screenshot": self._cmd_screenshot,
+            "/volume": self._cmd_volume,
+            "/media": self._cmd_media,
+            "/openurl": self._cmd_openurl,
             "/web": self._cmd_web,
             "/reset": self._cmd_reset,
             "/persona": self._cmd_persona,
@@ -644,6 +654,49 @@ class ChatCLI:
             confirmed=True,
         )
         print(result)
+
+    def _last_assistant_text(self) -> str | None:
+        messages = self.assistant.history.messages(self.assistant.session_id, limit=50)
+        return next(
+            (message.content for message in reversed(messages) if message.role == "assistant"),
+            None,
+        )
+
+    def _cmd_copy(self, args: list[str]) -> None:
+        text = " ".join(args).strip() or (self._last_assistant_text() or "")
+        if not text:
+            raise ValueError("Нечего копировать: в сессии ещё нет ответа.")
+        print(self.assistant.tools.execute("copy_clipboard", {"text": text}, confirmed=True))
+
+    def _cmd_screenshot(self, args: list[str]) -> None:
+        if not _confirm("Сделать скриншот экрана?"):
+            print("Отменено.")
+            return
+        print(self.assistant.tools.execute("screenshot", {}, confirmed=True))
+
+    def _cmd_volume(self, args: list[str]) -> None:
+        if not args:
+            print(self.assistant.tools.execute("get_volume", {}, confirmed=True))
+            return
+        try:
+            percent = int(args[0])
+        except ValueError as exc:
+            raise ValueError("Использование: /volume [0-150]") from exc
+        print(self.assistant.tools.execute("set_volume", {"percent": percent}, confirmed=True))
+
+    def _cmd_media(self, args: list[str]) -> None:
+        if not args:
+            raise ValueError("Использование: /media <play-pause|next|previous|stop>")
+        print(self.assistant.tools.execute("media_control", {"action": args[0]}, confirmed=True))
+
+    def _cmd_openurl(self, args: list[str]) -> None:
+        url = " ".join(args).strip()
+        if not url:
+            raise ValueError("Использование: /openurl <url>")
+        if not _confirm(f"Открыть в браузере {url}?"):
+            print("Отменено.")
+            return
+        print(self.assistant.tools.execute("open_url", {"url": url}, confirmed=True))
 
     def _cmd_web(self, args: list[str]) -> None:
         query = " ".join(args).strip()
