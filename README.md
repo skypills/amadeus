@@ -1,9 +1,10 @@
 # Amadeus
 
+[![CI](https://github.com/skypills/amadeus/actions/workflows/ci.yml/badge.svg)](https://github.com/skypills/amadeus/actions/workflows/ci.yml)
+
 Локальный ИИ-ассистент для CachyOS, вдохновлённый Amadeus из «Врат Штейна».
-Это **этап 9** развития: MVP по ТЗ завершён, добавлены умная память и безопасные
-системные действия Wayland — буфер обмена, скриншоты, громкость, медиа и ссылки.
-Далее — упаковка, CI и релиз.
+Это **версия 1.0.0**: MVP по ТЗ завершён, добавлены умная память, системные
+действия Wayland, упаковка, CI и release workflow.
 
 ## Что уже работает
 
@@ -31,6 +32,7 @@
 - сводки длинных сессий и автоматическое подключение сводки к контексту;
 - редактирование сохранённых фактов;
 - системные действия: буфер обмена, скриншоты, громкость, медиа, открытие URL;
+- CI на Python 3.12–3.14, coverage, wheel/sdist, PKGBUILD и Makefile;
 - инструкции установки, автозапуска и измерений производительности;
 - allowlist инструментов и проверка рискованных действий (задел на этап 5);
 - понятные ошибки при недоступности Ollama, модели или сети.
@@ -104,6 +106,30 @@ amadeus
 amadeus --status
 amadeus --once "Привет, проверка связи"
 ```
+
+## Разработка, упаковка и CI
+
+```bash
+make install     # pip install -e ".[dev]"
+make test        # offscreen pytest
+make cov         # coverage (порог 60%)
+make lint        # ruff check
+make format      # ruff format
+make build       # python -m build
+make gui         # amadeus-gui
+make diagnose    # amadeus --diagnose
+```
+
+Сборка и установка:
+
+```bash
+python -m build
+pip install dist/amadeus-1.0.0-py3-none-any.whl
+```
+
+Arch/CachyOS: `cd packaging && makepkg -si` (`amadeus-git`).
+CI: `.github/workflows/ci.yml`; релиз по тегу `v*` — `.github/workflows/release.yml`.
+Подробнее — `packaging/README.md` и `CHANGELOG.md`.
 
 ## Диагностика, стабильность и установка
 
@@ -494,6 +520,7 @@ pytest
 инструментов, голосовые адаптеры, системные инструменты, вызов инструментов
 моделью, веб-поиск (парсер, редиректы, ошибки), сводки сессий, системные
 действия, benchmark, диагностика, приватность и GUI (offscreen-тесты PySide6).
+Итого 129 тестов, coverage 62% (порог CI 60%).
 
 ## Диагностика оборудования
 
@@ -584,8 +611,12 @@ amadeus/
 │   ├── storage/             # пути platformdirs
 │   ├── ui/                  # PySide6: окно, чат, настройки
 │   └── voice/               # запись, whisper.cpp STT, Piper TTS, плеер
-├── packaging/               # .desktop, иконка, автозапуск
+├── packaging/               # .desktop, иконка, автозапуск, PKGBUILD
+├── .github/workflows/       # CI и release
 ├── config/hyprland.conf.example
+├── Makefile
+├── CHANGELOG.md
+├── LICENSE
 ├── tests/
 └── docs/                    # architecture, security, installation, benchmark
 ```
@@ -601,9 +632,9 @@ amadeus/
 - [x] Этап 7 — диагностика, benchmark, логи, тесты ошибок, установка, autostart.
 - [x] Этап 8 — умная память: сводки сессий, редактирование фактов.
 - [x] Этап 9 — системные действия Wayland.
-- [ ] Этап 10 — упаковка, CI и релиз.
+- [x] Этап 10 — упаковка, CI и релиз.
 
-MVP по ТЗ завершён; этапы 8–10 — развитие сверх ТЗ.
+MVP по ТЗ завершён; этапы 8–10 — развитие сверх ТЗ. Версия 1.0.0.
 
 ## Безопасность
 

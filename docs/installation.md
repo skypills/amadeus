@@ -145,6 +145,23 @@ amadeus --benchmark --benchmark-out ~/amadeus-bench.json
 Лог ротируется, не содержит API-ключей и текстов диалогов. Для диагностики
 приложите вывод `amadeus --diagnose` и хвост лога.
 
+## 8.1. Установка из пакета
+
+```bash
+python -m build
+pip install dist/amadeus-1.0.0-py3-none-any.whl
+```
+
+Arch/CachyOS:
+
+```bash
+cd packaging
+makepkg -si
+```
+
+PKGBUILD ставит `amadeus-git`, `.desktop` и иконку. Зависимости перечислены в
+`packaging/README.md`.
+
 ## 9. Обновление и удаление
 
 ```bash

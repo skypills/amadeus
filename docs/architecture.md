@@ -36,6 +36,18 @@
 9. При ошибке локальной модели и разрешённом облаке выполняется один
    повторный запрос через облако с уведомлением пользователя.
 
+## Этап 10: упаковка и CI
+
+- **Сборка.** `python -m build` создаёт wheel и sdist; console scripts
+  `amadeus` и `amadeus-gui` описаны в `pyproject.toml`.
+- **Arch/CachyOS.** `packaging/PKGBUILD` собирает `amadeus-git` и ставит
+  `.desktop`/иконку.
+- **CI.** GitHub Actions проверяет lint, формат, тесты и coverage на Python
+  3.12–3.14, затем собирает пакеты.
+- **Релиз.** Workflow по тегу `v*` создаёт GitHub Release с артефактами.
+- **Разработка.** `Makefile` даёт единые команды install/test/cov/lint/format/
+  build/gui/diagnose. Coverage-порог — 60%.
+
 ## Этап 9: системные действия Wayland
 
 - **Отдельные инструменты.** Буфер обмена, скриншот, громкость, медиа и

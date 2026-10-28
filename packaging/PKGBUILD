@@ -1,0 +1,34 @@
+# Maintainer: Skypills <pdxb027@gmail.com>
+_pkgname=amadeus
+pkgname=amadeus-git
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="Local AI assistant for CachyOS with CLI, PySide6 GUI, memory and voice"
+arch=('any')
+url="https://github.com/skypills/amadeus"
+license=('MIT')
+depends=('python' 'python-platformdirs' 'pyside6' 'python-ddgs')
+makedepends=('git' 'python-build' 'python-installer' 'python-wheel' 'python-setuptools')
+provides=("${_pkgname}")
+conflicts=("${_pkgname}")
+source=("git+${url}.git")
+sha256sums=('SKIP')
+
+pkgver() {
+    cd "$_pkgname"
+    printf '1.0.0.r%s.g%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+build() {
+    cd "$_pkgname"
+    python -m build --wheel --no-isolation
+}
+
+package() {
+    cd "$_pkgname"
+    python -m installer --destdir="$pkgdir" dist/*.whl
+    install -Dm644 packaging/amadeus.desktop \
+        "$pkgdir/usr/share/applications/amadeus.desktop"
+    install -Dm644 packaging/amadeus.svg \
+        "$pkgdir/usr/share/icons/hicolor/scalable/apps/amadeus.svg"
+}
