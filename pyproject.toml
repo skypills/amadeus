@@ -4,13 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "amadeus"
-version = "0.2.0"
+version = "0.3.0"
 description = "Локальный ИИ-ассистент Amadeus для CachyOS: текстовое ядро и CLI"
 readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "MIT" }
 dependencies = [
     "platformdirs>=4.0",
+    "PySide6>=6.7",
 ]
 
 [project.optional-dependencies]
@@ -21,6 +22,7 @@ dev = [
 
 [project.scripts]
 amadeus = "amadeus.cli:main"
+amadeus-gui = "amadeus.ui.window:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

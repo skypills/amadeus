@@ -40,7 +40,9 @@ def test_ollama_streaming_collects_chunks(monkeypatch):
         json.dumps({"message": {"content": "!"}, "done": True}),
     ]
     provider = OllamaProvider(model="test:1b")
-    monkeypatch.setattr(provider, "_request", lambda path, payload=None: FakeResponse(payloads))
+    monkeypatch.setattr(
+        provider, "_request", lambda path, payload=None, **kwargs: FakeResponse(payloads)
+    )
     chunks: list[str] = []
     answer = provider.chat([{"role": "user", "content": "hi"}], stream=True, on_chunk=chunks.append)
     assert answer == "Привет!"
@@ -50,7 +52,9 @@ def test_ollama_streaming_collects_chunks(monkeypatch):
 def test_ollama_non_streaming(monkeypatch):
     body = [json.dumps({"message": {"content": "ответ"}})]
     provider = OllamaProvider()
-    monkeypatch.setattr(provider, "_request", lambda path, payload=None: FakeResponse(body))
+    monkeypatch.setattr(
+        provider, "_request", lambda path, payload=None, **kwargs: FakeResponse(body)
+    )
     assert provider.chat([{"role": "user", "content": "hi"}], stream=False) == "ответ"
 
 
@@ -59,7 +63,7 @@ def test_ollama_reports_error_in_stream(monkeypatch):
     monkeypatch.setattr(
         provider,
         "_request",
-        lambda path, payload=None: FakeResponse([json.dumps({"error": "boom"})]),
+        lambda path, payload=None, **kwargs: FakeResponse([json.dumps({"error": "boom"})]),
     )
     with pytest.raises(ProviderError, match="boom"):
         provider.chat([{"role": "user", "content": "hi"}])
@@ -68,7 +72,9 @@ def test_ollama_reports_error_in_stream(monkeypatch):
 def test_ollama_status_missing_model(monkeypatch):
     body = [json.dumps({"models": [{"name": "other:1b"}]})]
     provider = OllamaProvider(model="test:1b")
-    monkeypatch.setattr(provider, "_request", lambda path, payload=None: FakeResponse(body))
+    monkeypatch.setattr(
+        provider, "_request", lambda path, payload=None, **kwargs: FakeResponse(body)
+    )
     status = provider.status()
     assert status.ok
     assert "test:1b" in status.detail

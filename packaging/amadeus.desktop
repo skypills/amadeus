@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Amadeus
+Comment=Локальный ИИ-ассистент для CachyOS
+Exec=amadeus-gui
+Icon=amadeus
+Terminal=false
+Categories=Utility;Development;
+Keywords=AI;assistant;ollama;amadeus;
+StartupWMClass=amadeus

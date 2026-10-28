@@ -1,0 +1,9 @@
+# Добавьте в ~/.config/hypr/hyprland.conf
+# Горячий вызов GUI (не глобальный перехват клавиш приложением).
+bind = SUPER, A, exec, amadeus-gui
+
+# Удобное окно Amadeus.
+# Для старых версий Hyprland замените windowrule на windowrulev2.
+windowrule = float, class:^(amadeus)$
+windowrule = size 1080 760, class:^(amadeus)$
+windowrule = center, class:^(amadeus)$

@@ -33,7 +33,12 @@ class OllamaProvider(Provider):
         self.top_p = top_p
         self.max_tokens = max_tokens
 
-    def _request(self, path: str, payload: dict[str, object] | None = None):
+    def _request(
+        self,
+        path: str,
+        payload: dict[str, object] | None = None,
+        timeout: float | None = None,
+    ):
         url = f"{self.base_url}{path}"
         data = None
         headers = {"Accept": "application/json"}
@@ -44,7 +49,7 @@ class OllamaProvider(Provider):
             method = "POST"
         request = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
-            return urllib.request.urlopen(request, timeout=self.timeout)
+            return urllib.request.urlopen(request, timeout=timeout or self.timeout)
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", errors="replace")
             hint = ""
@@ -62,7 +67,7 @@ class OllamaProvider(Provider):
 
     def status(self) -> ProviderStatus:
         try:
-            with self._request("/api/tags") as response:
+            with self._request("/api/tags", timeout=min(self.timeout, 5)) as response:
                 data = json.loads(response.read().decode("utf-8"))
         except ProviderError as exc:
             return ProviderStatus(False, str(exc))
