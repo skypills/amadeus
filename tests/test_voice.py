@@ -197,3 +197,56 @@ def test_pipeline_reports_missing_tools(tmp_path, settings):
     assert not status["stt"][0]
     assert not status["tts"][0]
     assert not status["player"][0]
+
+
+def test_piper_command_includes_profile_parameters(tmp_path, monkeypatch):
+    model = make_model(tmp_path)
+    tts = PiperTTS(
+        command=tts_script(tmp_path),
+        model=model,
+        length_scale=0.92,
+        noise_scale=0.75,
+        noise_w=0.85,
+        pitch_semitones=0.0,
+    )
+    captured = {}
+    import subprocess
+
+    real_run = subprocess.run
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        return real_run(command, **kwargs)
+
+    monkeypatch.setattr("amadeus.voice.tts.subprocess.run", fake_run)
+    tts.synthesize("тест", tmp_path / "out.wav")
+    joined = " ".join(captured["command"])
+    assert "--length_scale 0.92" in joined
+    assert "--noise_scale 0.75" in joined
+    assert "--noise_w 0.85" in joined
+
+
+def test_pitch_shift_keeps_valid_wav(tmp_path):
+    import math
+    import shutil
+    import struct
+    import wave
+
+    if shutil.which("ffmpeg") is None:
+        pytest.skip("ffmpeg не установлен")
+    path = tmp_path / "tone.wav"
+    rate = 22050
+    with wave.open(str(path), "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(rate)
+        frames = b"".join(
+            struct.pack("<h", int(8000 * math.sin(2 * math.pi * 220 * i / rate)))
+            for i in range(rate // 4)
+        )
+        audio.writeframes(frames)
+    tts = PiperTTS(command=tts_script(tmp_path), model=make_model(tmp_path), pitch_semitones=2)
+    tts._shift_pitch(path)
+    with wave.open(str(path), "rb") as audio:
+        assert audio.getframerate() == rate
+        assert audio.getnframes() > 0

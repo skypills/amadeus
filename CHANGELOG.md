@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.0 — 2026-10-29
+
+- Персоны `amadeus` и `kurisu` (оригинальная интерпретация, не копия).
+- Голосовые профили: темп, noise_scale, noise_w и сдвиг тона через ffmpeg.
+- Переключение в CLI (`/persona preset`, `/voice profile`) и GUI.
+- Исправлен parecord: позиционный путь к WAV.
+- Реальная проверка Ollama, whisper.cpp, Piper, Wayland GUI и PKGBUILD.
+
 ## 1.0.0 — 2026-10-28
 
 Первый стабильный релиз Amadeus.

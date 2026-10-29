@@ -31,6 +31,7 @@ DEFAULT_SETTINGS: dict[str, dict[str, Any]] = {
         "memory_limit": 5,
     },
     "personality": {
+        "preset": "amadeus",
         "mood": "calm",
         "familiarity": 0.4,
         "verbosity": 0.5,
@@ -79,6 +80,11 @@ DEFAULT_SETTINGS: dict[str, dict[str, Any]] = {
         "language": "ru",
         "auto_send": True,
         "auto_speak": False,
+        "profile": "default",
+        "length_scale": 1.0,
+        "noise_scale": 0.667,
+        "noise_w": 0.8,
+        "pitch_semitones": 0.0,
     },
 }
 

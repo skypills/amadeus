@@ -166,6 +166,7 @@ def test_settings_dialog_saves(qapp, settings, tmp_path):
     dialog.verbosity_spin.setValue(0.9)
     dialog.stt_model_edit.setText("/tmp/whisper.bin")
     dialog.auto_speak_check.setChecked(True)
+    dialog.voice_profile_combo.setCurrentText("kurisu")
     dialog._save()
 
     assert settings.get("ollama.model") == "gui-test:1b"
@@ -173,6 +174,8 @@ def test_settings_dialog_saves(qapp, settings, tmp_path):
     assert settings.get("personality.verbosity") == 0.9
     assert settings.get("voice.stt_model") == "/tmp/whisper.bin"
     assert settings.get("voice.auto_speak") is True
+    assert settings.get("voice.profile") == "kurisu"
+    assert settings.get("voice.pitch_semitones") == 2.0
 
 
 def test_main_window_smoke(qapp, settings, tmp_path):

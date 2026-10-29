@@ -35,6 +35,10 @@ class VoicePipeline:
         self.tts = tts or PiperTTS(
             str(settings.get("voice.tts_command", "piper")),
             str(settings.get("voice.tts_model", "")),
+            length_scale=float(settings.get("voice.length_scale", 1.0)),
+            noise_scale=float(settings.get("voice.noise_scale", 0.667)),
+            noise_w=float(settings.get("voice.noise_w", 0.8)),
+            pitch_semitones=float(settings.get("voice.pitch_semitones", 0.0)),
             timeout=float(settings.get("voice.tts_timeout", 120)),
         )
         self.player = player or AudioPlayer(str(settings.get("voice.player_command", "")))

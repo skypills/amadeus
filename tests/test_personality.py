@@ -46,3 +46,33 @@ def test_prompt_contains_persona_and_style(settings, tmp_path):
     assert "тестовый Amadeus" in prompt
     assert "technical" in prompt
     assert "настроение" in prompt
+
+
+def test_persona_presets(tmp_path):
+    from amadeus.personality import PERSONAS, get_persona, write_persona
+
+    assert set(PERSONAS) == {"amadeus", "kurisu"}
+    kurisu = get_persona("kurisu")
+    assert "Курису" in kurisu
+    assert "оригинальная" in kurisu
+    assert "Не выдавай себя за" in kurisu
+
+    target = tmp_path / "persona.md"
+    write_persona(target, "kurisu")
+    assert target.read_text(encoding="utf-8").startswith("Ты — Курису")
+    with pytest.raises(ValueError, match="Неизвестный пресет"):
+        get_persona("official")
+
+
+def test_voice_profile_applies_and_persists(settings):
+    from amadeus.voice.profiles import apply_voice_profile
+
+    profile = apply_voice_profile(settings, "kurisu")
+    assert profile.pitch_semitones == 2.0
+    assert settings.get("voice.profile") == "kurisu"
+    assert settings.get("voice.length_scale") == 0.92
+    assert settings.get("voice.pitch_semitones") == 2.0
+
+    apply_voice_profile(settings, "default")
+    assert settings.get("voice.profile") == "default"
+    assert settings.get("voice.pitch_semitones") == 0.0

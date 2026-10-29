@@ -23,8 +23,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..personality import MOODS
-from ..settings import DEFAULT_PERSONA, Settings
+from ..personality import MOODS, PERSONAS, write_persona
+from ..settings import Settings
+from ..voice.profiles import VOICE_PROFILES, apply_voice_profile
 
 
 class SettingsDialog(QDialog):
@@ -100,6 +101,9 @@ class SettingsDialog(QDialog):
         self.auto_send_check.setChecked(bool(self.settings.get("voice.auto_send", True)))
         self.auto_speak_check = QCheckBox("Озвучивать ответы автоматически")
         self.auto_speak_check.setChecked(bool(self.settings.get("voice.auto_speak", False)))
+        self.voice_profile_combo = QComboBox()
+        self.voice_profile_combo.addItems(list(VOICE_PROFILES))
+        self.voice_profile_combo.setCurrentText(str(self.settings.get("voice.profile", "default")))
 
         form.addRow("STT команда:", self.stt_command_edit)
         form.addRow("Модель Whisper:", self.stt_model_edit)
@@ -108,6 +112,7 @@ class SettingsDialog(QDialog):
         form.addRow("Язык:", self.language_edit)
         form.addRow("Рекордер (пусто = авто):", self.recorder_command_edit)
         form.addRow("Плеер (пусто = авто):", self.player_command_edit)
+        form.addRow("Профиль голоса:", self.voice_profile_combo)
         form.addRow("", self.auto_send_check)
         form.addRow("", self.auto_speak_check)
         hint = QLabel(
@@ -134,16 +139,29 @@ class SettingsDialog(QDialog):
 
     def _build_persona_group(self) -> QGroupBox:
         group = QGroupBox("Персона")
-        layout = QHBoxLayout(group)
+        layout = QVBoxLayout(group)
+        preset_row = QHBoxLayout()
+        self.persona_preset_combo = QComboBox()
+        self.persona_preset_combo.addItems(list(PERSONAS))
+        self.persona_preset_combo.setCurrentText(
+            str(self.settings.get("personality.preset", "amadeus"))
+        )
+        apply_preset_button = QPushButton("Применить пресет")
+        apply_preset_button.clicked.connect(self._apply_persona_preset)
+        preset_row.addWidget(self.persona_preset_combo, 1)
+        preset_row.addWidget(apply_preset_button)
+        layout.addLayout(preset_row)
+        buttons = QHBoxLayout()
         self.persona_label = QLabel(str(self.persona_path))
         self.persona_label.setWordWrap(True)
         edit_button = QPushButton("Редактировать")
         edit_button.clicked.connect(self._edit_persona)
         reset_button = QPushButton("Сбросить")
         reset_button.clicked.connect(self._reset_persona)
-        layout.addWidget(self.persona_label, 1)
-        layout.addWidget(edit_button)
-        layout.addWidget(reset_button)
+        buttons.addWidget(self.persona_label, 1)
+        buttons.addWidget(edit_button)
+        buttons.addWidget(reset_button)
+        layout.addLayout(buttons)
         return group
 
     def _make_spin(self, key: str) -> QDoubleSpinBox:
@@ -216,12 +234,38 @@ class SettingsDialog(QDialog):
         }
         for key, value in values.items():
             self.settings.set(key, value, save=False)
+        try:
+            apply_voice_profile(
+                self.settings,
+                self.voice_profile_combo.currentText(),
+                save=False,
+            )
+        except ValueError as exc:
+            QMessageBox.warning(self, "Голос", str(exc))
+            return
         self.settings.save()
         self.accept()
 
     def _editor_command(self) -> list[str]:
         command = shlex.split(os.environ.get("EDITOR", ""))
         return command or ["nano"]
+
+    def _apply_persona_preset(self) -> None:
+        name = self.persona_preset_combo.currentText()
+        answer = QMessageBox.question(
+            self,
+            "Персона",
+            f"Заменить persona.md пресетом «{name}»?",
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        write_persona(self.persona_path, name)
+        self.settings.set("personality.preset", name)
+        QMessageBox.information(
+            self,
+            "Персона",
+            f"Пресет «{name}» применён. Изменения вступят со следующего ответа.",
+        )
 
     def _edit_persona(self) -> None:
         command = self._editor_command()
@@ -238,6 +282,7 @@ class SettingsDialog(QDialog):
         )
         if answer != QMessageBox.StandardButton.Yes:
             return
-        self.persona_path.parent.mkdir(parents=True, exist_ok=True)
-        self.persona_path.write_text(DEFAULT_PERSONA, encoding="utf-8")
-        QMessageBox.information(self, "Персона", "Стандартная персона восстановлена.")
+        preset = str(self.settings.get("personality.preset", "amadeus"))
+        preset = preset if preset in PERSONAS else "amadeus"
+        write_persona(self.persona_path, preset)
+        QMessageBox.information(self, "Персона", f"Пресет «{preset}» восстановлен.")

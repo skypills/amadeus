@@ -18,13 +18,26 @@ from .diagnostics import (
 )
 from .logging_setup import configure_logging
 from .memory import Database, FactProposal
-from .personality import MOODS, load_mood, reset_mood, set_mood, set_parameter
+from .personality import (
+    MOODS,
+    PERSONAS,
+    load_mood,
+    reset_mood,
+    set_mood,
+    set_parameter,
+    write_persona,
+)
 from .providers import OllamaProvider
 from .security import PermissionDenied
-from .settings import DEFAULT_PERSONA, ConfigError, Settings, dump_toml
+from .settings import ConfigError, Settings, dump_toml
 from .storage import paths
 from .tools import ToolError, WebSearch, WebSearchError, render_results, render_sources
-from .voice import VoiceError, VoicePipeline
+from .voice import (
+    VOICE_PROFILES,
+    VoiceError,
+    VoicePipeline,
+    apply_voice_profile,
+)
 
 try:
     import readline  # noqa: F401
@@ -60,7 +73,8 @@ HELP_TEXT = """\
   /stream on|off            включить или выключить потоковый вывод
   /mood [настроение]        показать или сменить настроение
   /tone <параметр> <0..1>   familiarity, verbosity или initiative
-  /voice [status|stop]      состояние голосовых компонентов / стоп озвучки
+  /voice [status|stop|profile <имя>]
+                            состояние голоса, стоп озвучки, профиль голоса
   /listen [секунды]         записать, распознать и отправить (если auto_send)
   /say <текст>              озвучить текст локальным TTS
   /tools                    список разрешённых инструментов
@@ -75,7 +89,8 @@ HELP_TEXT = """\
   /web <запрос>             поиск в интернете и ответ по источникам
   /character [reset]        показать или сбросить характер
   /reset                    сбросить настроение и параметры стиля
-  /persona [edit|reset]     показать, изменить или сбросить persona.md
+  /persona [edit|reset|presets|preset <имя>]
+                            показать/изменить персону или выбрать пресет
   /settings                 показать текущие настройки
   /status                   проверить доступность модели
   /config                   показать пути конфигурации и данных
@@ -718,8 +733,31 @@ class ChatCLI:
             self.voice.stop_speaking()
             print("Озвучивание остановлено.")
             return
+        if action == "profile":
+            if len(args) < 2:
+                print(
+                    f"Профиль: {self.settings.get('voice.profile', 'default')}\n"
+                    f"length_scale={self.settings.get('voice.length_scale')}, "
+                    f"noise_scale={self.settings.get('voice.noise_scale')}, "
+                    f"noise_w={self.settings.get('voice.noise_w')}, "
+                    f"pitch={self.settings.get('voice.pitch_semitones')}\n"
+                    f"Доступно: {', '.join(VOICE_PROFILES)}"
+                )
+                return
+            try:
+                profile = apply_voice_profile(self.settings, args[1])
+            except ValueError as exc:
+                raise ValueError(str(exc)) from exc
+            self.voice.close()
+            self.voice = VoicePipeline(self.settings)
+            print(
+                f"Голосовой профиль: {profile.name} "
+                f"(pitch {profile.pitch_semitones:+.1f}, "
+                f"length_scale {profile.length_scale:.2f})."
+            )
+            return
         if action != "status":
-            raise ValueError("Использование: /voice [status|stop]")
+            raise ValueError("Использование: /voice [status|stop|profile <имя>]")
         labels = {
             "recorder": "Запись",
             "stt": "Распознавание",
@@ -775,16 +813,38 @@ class ChatCLI:
             print(f"\nФайл: {path}")
             return
         action = args[0].lower()
-        if action == "reset":
-            if not _confirm("Вернуть стандартную персону? Текущий текст будет перезаписан."):
+        if action == "presets":
+            current = self.settings.get("personality.preset", "amadeus")
+            for name in PERSONAS:
+                mark = "*" if name == current else " "
+                print(f"{mark} {name}")
+            return
+        if action == "preset":
+            if len(args) < 2:
+                raise ValueError("Использование: /persona preset <имя>")
+            name = args[1].lower()
+            if name not in PERSONAS:
+                raise ValueError(f"Неизвестный пресет «{name}». Доступно: {', '.join(PERSONAS)}.")
+            if not _confirm(f"Заменить persona.md пресетом «{name}»?"):
                 print("Отменено.")
                 return
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(DEFAULT_PERSONA, encoding="utf-8")
-            print("Персона сброшена к стандартной.")
+            write_persona(path, name)
+            self.settings.set("personality.preset", name)
+            print(f"Персона заменена пресетом «{name}». Изменения применятся сразу.")
+            return
+        if action == "reset":
+            preset = str(self.settings.get("personality.preset", "amadeus"))
+            preset = preset if preset in PERSONAS else "amadeus"
+            if not _confirm(
+                f"Вернуть пресет «{preset}»? Текущий текст persona.md будет перезаписан."
+            ):
+                print("Отменено.")
+                return
+            write_persona(path, preset)
+            print(f"Персона сброшена к пресету «{preset}».")
             return
         if action != "edit":
-            raise ValueError("Использование: /persona [edit|reset]")
+            raise ValueError("Использование: /persona [edit|reset|presets|preset <имя>]")
         editor = os.environ.get("EDITOR", "nano")
         command = shlex.split(editor) or ["nano"]
         try:

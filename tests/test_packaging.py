@@ -12,7 +12,7 @@ def test_version_is_consistent():
     with (ROOT / "pyproject.toml").open("rb") as handle:
         project = tomllib.load(handle)["project"]
     assert project["version"] == __version__
-    assert __version__ == "1.0.0"
+    assert __version__ == "1.1.0"
 
 
 def test_entry_points_defined():
