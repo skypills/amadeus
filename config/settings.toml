@@ -67,3 +67,4 @@ pitch_semitones = 2.0
 
 [ui]
 close_to_tray = true
+chibi_enabled = true

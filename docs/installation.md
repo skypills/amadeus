@@ -168,7 +168,7 @@ amadeus --benchmark --benchmark-out ~/amadeus-bench.json
 
 ```bash
 python -m build
-pip install dist/amadeus-1.2.0-py3-none-any.whl
+pip install dist/amadeus-1.3.0-py3-none-any.whl
 ```
 
 Arch/CachyOS:

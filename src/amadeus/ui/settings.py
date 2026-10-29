@@ -41,6 +41,7 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.addWidget(self._build_model_group())
         layout.addWidget(self._build_voice_group())
+        layout.addWidget(self._build_ui_group())
         layout.addWidget(self._build_personality_group())
         layout.addWidget(self._build_persona_group())
 
@@ -117,6 +118,23 @@ class SettingsDialog(QDialog):
         form.addRow("", self.auto_speak_check)
         hint = QLabel(
             "Модели whisper.cpp и Piper не входят в пакет. Пути и установка описаны в README."
+        )
+        hint.setWordWrap(True)
+        form.addRow(hint)
+        return group
+
+    def _build_ui_group(self) -> QGroupBox:
+        group = QGroupBox("Интерфейс")
+        form = QFormLayout(group)
+        self.close_tray_check = QCheckBox("Закрывать окно в трей")
+        self.close_tray_check.setChecked(bool(self.settings.get("ui.close_to_tray", True)))
+        self.chibi_check = QCheckBox("Чиби-Курису на рабочем столе")
+        self.chibi_check.setChecked(bool(self.settings.get("ui.chibi_enabled", True)))
+        form.addRow("", self.close_tray_check)
+        form.addRow("", self.chibi_check)
+        hint = QLabel(
+            "Чиби двигается по экрану, перетаскивается мышью и открывает Amadeus "
+            "двойным кликом. Позиционирование использует Hyprland."
         )
         hint.setWordWrap(True)
         form.addRow(hint)
@@ -227,6 +245,8 @@ class SettingsDialog(QDialog):
             "voice.player_command": self.player_command_edit.text().strip(),
             "voice.auto_send": self.auto_send_check.isChecked(),
             "voice.auto_speak": self.auto_speak_check.isChecked(),
+            "ui.close_to_tray": self.close_tray_check.isChecked(),
+            "ui.chibi_enabled": self.chibi_check.isChecked(),
             "personality.mood": self.mood_combo.currentText(),
             "personality.familiarity": self.familiarity_spin.value(),
             "personality.verbosity": self.verbosity_spin.value(),

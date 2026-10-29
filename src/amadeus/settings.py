@@ -88,6 +88,7 @@ DEFAULT_SETTINGS: dict[str, dict[str, Any]] = {
     },
     "ui": {
         "close_to_tray": True,
+        "chibi_enabled": True,
     },
 }
 

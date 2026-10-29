@@ -13,6 +13,7 @@ def test_defaults_are_written_and_persona_created(settings):
     assert settings.get("personality.preset") == "kurisu"
     assert settings.get("voice.profile") == "kurisu"
     assert settings.get("voice.auto_speak") is True
+    assert settings.get("ui.chibi_enabled") is True
     assert "Курису" in settings.persona_path.read_text(encoding="utf-8")
 
 

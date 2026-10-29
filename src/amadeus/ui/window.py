@@ -50,6 +50,7 @@ from ..storage import paths
 from ..tools import ToolError, WebSearch, render_results, render_sources
 from ..voice import VoiceError, VoicePipeline
 from .chat import ChatInput, ChatView, MessageBubble
+from .chibi import ChibiWindow
 from .settings import SettingsDialog
 
 USER_ROLE = Qt.ItemDataRole.UserRole
@@ -254,6 +255,7 @@ class MainWindow(QMainWindow):
         settings: Settings,
         auto_status: bool = True,
         voice_pipeline: VoicePipeline | None = None,
+        chibi_enabled: bool | None = None,
     ) -> None:
         super().__init__()
         self.assistant = assistant
@@ -273,6 +275,8 @@ class MainWindow(QMainWindow):
         self._force_quit = False
         self._tray: QSystemTrayIcon | None = None
         self._tray_hint_shown = False
+        self._chibi: ChibiWindow | None = None
+        self._chibi_override = chibi_enabled
 
         self.setWindowTitle("Amadeus")
         self.resize(1080, 760)
@@ -280,6 +284,7 @@ class MainWindow(QMainWindow):
         self._build_menu()
         self._apply_style()
         self._setup_tray()
+        self._apply_chibi()
         self._load_session(self.assistant.session_id)
         self._refresh_history()
         self._refresh_facts()
@@ -433,6 +438,11 @@ class MainWindow(QMainWindow):
         show_action.triggered.connect(self._show_window)
         new_action = menu.addAction("Новая сессия")
         new_action.triggered.connect(self._new_session_from_tray)
+        self._chibi_action = menu.addAction("Чиби на рабочем столе")
+        self._chibi_action.setCheckable(True)
+        self._chibi_action.setChecked(bool(self.settings.get("ui.chibi_enabled", False)))
+        self._chibi_action.toggled.connect(self._toggle_chibi)
+        menu.addSeparator()
         settings_action = menu.addAction("Настройки…")
         settings_action.triggered.connect(self._open_settings)
         menu.addSeparator()
@@ -463,6 +473,43 @@ class MainWindow(QMainWindow):
         painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "K")
         painter.end()
         return QIcon(pixmap)
+
+    def _apply_chibi(self) -> None:
+        enabled = (
+            self._chibi_override
+            if self._chibi_override is not None
+            else bool(self.settings.get("ui.chibi_enabled", False))
+        )
+        if enabled and self._chibi is None:
+            self._chibi = ChibiWindow()
+            self._chibi.open_requested.connect(self._show_window)
+            self._chibi.settings_requested.connect(self._open_settings_from_chibi)
+            self._chibi.hide_requested.connect(self._hide_chibi)
+            self._chibi.quit_requested.connect(self._quit_from_tray)
+            self._chibi.show()
+        elif not enabled and self._chibi is not None:
+            self._chibi.close()
+            self._chibi.deleteLater()
+            self._chibi = None
+        if hasattr(self, "_chibi_action"):
+            previous = self._chibi_action.blockSignals(True)
+            self._chibi_action.setChecked(self._chibi is not None)
+            self._chibi_action.blockSignals(previous)
+
+    def _toggle_chibi(self, checked: bool) -> None:
+        self.settings.set("ui.chibi_enabled", checked)
+        self._chibi_override = checked
+        self._apply_chibi()
+        self.statusBar().showMessage("Чиби включена." if checked else "Чиби скрыта.", 5000)
+
+    def _hide_chibi(self) -> None:
+        self.settings.set("ui.chibi_enabled", False)
+        self._chibi_override = False
+        self._apply_chibi()
+
+    def _open_settings_from_chibi(self) -> None:
+        self._show_window()
+        self._open_settings()
 
     def _show_window(self) -> None:
         self.showNormal()
@@ -1279,6 +1326,8 @@ class MainWindow(QMainWindow):
         if dialog.exec() == QDialog.DialogCode.Accepted:
             self.voice.close()
             self.voice = VoicePipeline(self.settings)
+            self._chibi_override = None
+            self._apply_chibi()
             self._refresh_voice_status()
             self._update_cloud_label()
             self._refresh_status()
@@ -1385,6 +1434,9 @@ class MainWindow(QMainWindow):
                 )
                 event.ignore()
                 return
+        if self._chibi is not None:
+            self._chibi.close()
+            self._chibi = None
         self.voice.close()
         self._voice_timer.stop()
         self._status_timer.stop()
@@ -1411,6 +1463,9 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="показать/скрыть уже запущенный экземпляр",
     )
+    chibi_group = parser.add_mutually_exclusive_group()
+    chibi_group.add_argument("--chibi", action="store_true", help="показать чиби на рабочем столе")
+    chibi_group.add_argument("--no-chibi", action="store_true", help="скрыть чиби на рабочем столе")
     parser.add_argument("--version", action="version", version=f"Amadeus {__version__}")
     return parser
 
@@ -1439,6 +1494,10 @@ def main(argv: list[str] | None = None) -> int:
         settings.set("ollama.model", args.model)
     if args.no_stream:
         settings.set("ollama.stream", False)
+    if args.chibi:
+        settings.set("ui.chibi_enabled", True)
+    if args.no_chibi:
+        settings.set("ui.chibi_enabled", False)
 
     try:
         db = Database()

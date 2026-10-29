@@ -172,6 +172,8 @@ def test_settings_dialog_saves(qapp, settings, tmp_path):
     dialog.stt_model_edit.setText("/tmp/whisper.bin")
     dialog.auto_speak_check.setChecked(True)
     dialog.voice_profile_combo.setCurrentText("kurisu")
+    dialog.chibi_check.setChecked(False)
+    dialog.close_tray_check.setChecked(False)
     dialog._save()
 
     assert settings.get("ollama.model") == "gui-test:1b"
@@ -181,6 +183,8 @@ def test_settings_dialog_saves(qapp, settings, tmp_path):
     assert settings.get("voice.auto_speak") is True
     assert settings.get("voice.profile") == "kurisu"
     assert settings.get("voice.pitch_semitones") == 2.0
+    assert settings.get("ui.chibi_enabled") is False
+    assert settings.get("ui.close_to_tray") is False
 
 
 def test_main_window_smoke(qapp, settings, tmp_path):
@@ -283,3 +287,37 @@ def test_main_window_has_instance_handler(qapp, settings, tmp_path):
     window._force_quit = True
     window.close()
     assistant.close()
+
+
+def test_chibi_window_renders_and_ticks(qapp):
+    from amadeus.ui.chibi import CHIBI_SIZE, ChibiWindow
+
+    chibi = ChibiWindow(use_hyprland=False)
+    chibi.show()
+    qapp.processEvents()
+    assert chibi.width() == CHIBI_SIZE
+    assert not chibi.grab().isNull()
+    chibi._tick()
+    chibi.close()
+
+
+def test_main_window_chibi_toggle(qapp, settings, tmp_path):
+    assistant = Assistant(
+        settings,
+        db=Database(tmp_path / "gui-chibi.db"),
+        persona_path=tmp_path / "persona.md",
+    )
+    window = MainWindow(assistant, settings, auto_status=False, chibi_enabled=True)
+    assert window._chibi is not None
+    window._toggle_chibi(False)
+    assert window._chibi is None
+    window._toggle_chibi(True)
+    assert window._chibi is not None
+    window._force_quit = True
+    window.close()
+    assistant.close()
+
+
+def test_gui_parser_chibi_flags():
+    assert build_parser().parse_args(["--chibi"]).chibi is True
+    assert build_parser().parse_args(["--no-chibi"]).no_chibi is True
