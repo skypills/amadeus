@@ -16,7 +16,12 @@ from amadeus.core.events import EventBus  # noqa: E402
 from amadeus.memory import Database  # noqa: E402
 from amadeus.ui.chat import ChatView  # noqa: E402
 from amadeus.ui.settings import SettingsDialog  # noqa: E402
-from amadeus.ui.window import ChatWorker, MainWindow, VoiceWorker  # noqa: E402
+from amadeus.ui.window import (  # noqa: E402
+    ChatWorker,
+    MainWindow,
+    VoiceWorker,
+    build_parser,
+)
 
 
 @pytest.fixture(scope="module")
@@ -258,3 +263,23 @@ def test_summary_worker(qapp, settings, tmp_path):
     assert results == ["сводка текста"]
     assert fake.session_id == 4
     assert fake.closed
+
+
+def test_gui_parser_background_and_toggle():
+    args = build_parser().parse_args(["--background", "--toggle"])
+    assert args.background is True
+    assert args.toggle is True
+
+
+def test_main_window_has_instance_handler(qapp, settings, tmp_path):
+    assistant = Assistant(
+        settings,
+        db=Database(tmp_path / "gui-bg.db"),
+        persona_path=tmp_path / "persona.md",
+    )
+    window = MainWindow(assistant, settings, auto_status=False)
+    window.handle_instance_message("show")
+    window.handle_instance_message("toggle")
+    window._force_quit = True
+    window.close()
+    assistant.close()

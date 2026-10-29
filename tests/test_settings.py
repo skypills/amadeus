@@ -10,6 +10,10 @@ def test_defaults_are_written_and_persona_created(settings):
     assert settings.persona_path.exists()
     assert settings.get("provider.name") == "ollama"
     assert settings.get("ollama.model")
+    assert settings.get("personality.preset") == "kurisu"
+    assert settings.get("voice.profile") == "kurisu"
+    assert settings.get("voice.auto_speak") is True
+    assert "Курису" in settings.persona_path.read_text(encoding="utf-8")
 
 
 def test_settings_change_persists(settings):

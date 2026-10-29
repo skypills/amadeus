@@ -1,13 +1,23 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QAction, QGuiApplication, QKeySequence
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
+from PySide6.QtGui import (
+    QAction,
+    QColor,
+    QGuiApplication,
+    QIcon,
+    QKeySequence,
+    QPainter,
+    QPixmap,
+)
+from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -20,8 +30,10 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPushButton,
+    QSystemTrayIcon,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -41,6 +53,37 @@ from .chat import ChatInput, ChatView, MessageBubble
 from .settings import SettingsDialog
 
 USER_ROLE = Qt.ItemDataRole.UserRole
+SERVER_NAME = f"amadeus-gui-{os.getuid()}"
+
+
+class SingleInstance(QObject):
+    message = Signal(str)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.server = QLocalServer(self)
+        self.server.newConnection.connect(self._on_connection)
+
+    def try_start(self, action: str = "show") -> bool:
+        if self.server.listen(SERVER_NAME):
+            return True
+        socket = QLocalSocket()
+        socket.connectToServer(SERVER_NAME)
+        if socket.waitForConnected(500):
+            socket.write(action.encode("utf-8"))
+            socket.waitForBytesWritten(500)
+            socket.disconnectFromServer()
+            return False
+        QLocalServer.removeServer(SERVER_NAME)
+        return self.server.listen(SERVER_NAME)
+
+    def _on_connection(self) -> None:
+        connection = self.server.nextPendingConnection()
+        if connection is None:
+            return
+        data = bytes(connection.readAll()).decode("utf-8", errors="replace").strip()
+        self.message.emit(data or "show")
+        connection.disconnectFromServer()
 
 
 class GenerationCancelled(Exception):
@@ -227,12 +270,16 @@ class MainWindow(QMainWindow):
         self._busy = False
         self._auto_status = auto_status
         self._search_query = ""
+        self._force_quit = False
+        self._tray: QSystemTrayIcon | None = None
+        self._tray_hint_shown = False
 
         self.setWindowTitle("Amadeus")
         self.resize(1080, 760)
         self._build_ui()
         self._build_menu()
         self._apply_style()
+        self._setup_tray()
         self._load_session(self.assistant.session_id)
         self._refresh_history()
         self._refresh_facts()
@@ -371,6 +418,86 @@ class MainWindow(QMainWindow):
         self.statusBar().addPermanentWidget(self.mic_label)
         self.statusBar().addPermanentWidget(self.status_label)
         self._update_cloud_label()
+
+    @property
+    def tray_available(self) -> bool:
+        return self._tray is not None
+
+    def _setup_tray(self) -> bool:
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return False
+        tray = QSystemTrayIcon(self._tray_icon(), self)
+        tray.setToolTip("Amadeus — Курису")
+        menu = QMenu(self)
+        show_action = menu.addAction("Показать")
+        show_action.triggered.connect(self._show_window)
+        new_action = menu.addAction("Новая сессия")
+        new_action.triggered.connect(self._new_session_from_tray)
+        settings_action = menu.addAction("Настройки…")
+        settings_action.triggered.connect(self._open_settings)
+        menu.addSeparator()
+        quit_action = menu.addAction("Выход")
+        quit_action.triggered.connect(self._quit_from_tray)
+        tray.setContextMenu(menu)
+        tray.activated.connect(self._on_tray_activated)
+        tray.show()
+        self._tray = tray
+        return True
+
+    def _tray_icon(self) -> QIcon:
+        icon = QIcon.fromTheme("amadeus")
+        if not icon.isNull():
+            return icon
+        pixmap = QPixmap(64, 64)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setBrush(QColor("#1f2937"))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(2, 2, 60, 60, 14, 14)
+        painter.setPen(QColor("#7fb3ff"))
+        font = painter.font()
+        font.setBold(True)
+        font.setPointSize(30)
+        painter.setFont(font)
+        painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "K")
+        painter.end()
+        return QIcon(pixmap)
+
+    def _show_window(self) -> None:
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def _toggle_window(self) -> None:
+        if self.isVisible() and not self.isMinimized():
+            self.hide()
+        else:
+            self._show_window()
+
+    def _on_tray_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
+        if reason in (
+            QSystemTrayIcon.ActivationReason.Trigger,
+            QSystemTrayIcon.ActivationReason.DoubleClick,
+        ):
+            self._toggle_window()
+
+    def _new_session_from_tray(self) -> None:
+        self._show_window()
+        self._new_session()
+
+    def _quit_from_tray(self) -> None:
+        self._force_quit = True
+        self.close()
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
+
+    def handle_instance_message(self, action: str) -> None:
+        if action == "toggle":
+            self._toggle_window()
+        else:
+            self._show_window()
 
     def _build_menu(self) -> None:
         file_menu = self.menuBar().addMenu("Файл")
@@ -1198,6 +1325,23 @@ class MainWindow(QMainWindow):
         )
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt API
+        if (
+            not self._force_quit
+            and bool(self.settings.get("ui.close_to_tray", True))
+            and self._tray is not None
+            and self._tray.isVisible()
+        ):
+            self.hide()
+            if not self._tray_hint_shown:
+                self._tray.showMessage(
+                    "Amadeus",
+                    "Свернулась в трей. Показать: amadeus-gui --toggle",
+                    QSystemTrayIcon.MessageIcon.Information,
+                    5000,
+                )
+                self._tray_hint_shown = True
+            event.ignore()
+            return
         if self._worker is not None and self._worker.isRunning():
             answer = QMessageBox.question(
                 self,
@@ -1257,6 +1401,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--session", type=int, help="открыть сессию по id")
     parser.add_argument("--new", action="store_true", help="начать новую сессию")
     parser.add_argument("--no-stream", action="store_true", help="отключить потоковый вывод")
+    parser.add_argument(
+        "--background",
+        action="store_true",
+        help="запустить скрыто в фоне (трей/горячая клавиша)",
+    )
+    parser.add_argument(
+        "--toggle",
+        action="store_true",
+        help="показать/скрыть уже запущенный экземпляр",
+    )
     parser.add_argument("--version", action="version", version=f"Amadeus {__version__}")
     return parser
 
@@ -1266,6 +1420,10 @@ def main(argv: list[str] | None = None) -> int:
     logger = configure_logging()
     logger.info("GUI start version=%s", __version__)
     app = QApplication(sys.argv[:1])
+    single = SingleInstance()
+    action = "toggle" if args.toggle else "show"
+    if not single.try_start(action):
+        return 0
     app.setApplicationName("Amadeus")
     app.setApplicationDisplayName("Amadeus")
     app.setOrganizationName("Amadeus")
@@ -1296,8 +1454,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     window = MainWindow(assistant, settings)
+    single.message.connect(window.handle_instance_message)
     app.aboutToQuit.connect(assistant.close)
-    window.show()
+    app.setQuitOnLastWindowClosed(not window.tray_available)
+    if not args.background:
+        window.show()
     return app.exec()
 
 

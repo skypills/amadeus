@@ -4,7 +4,7 @@
 
 ```bash
 python -m build
-pip install dist/amadeus-1.1.0-py3-none-any.whl
+pip install dist/amadeus-1.2.0-py3-none-any.whl
 ```
 
 Wheel содержит Python-код и console scripts `amadeus`, `amadeus-gui`.
@@ -33,6 +33,6 @@ PKGBUILD собирает `amadeus-git` из GitHub и ставит `.desktop` �
 Релиз:
 
 ```bash
-git tag v1.1.0
+git tag v1.2.0
 git push origin v1.0.0
 ```

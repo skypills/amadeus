@@ -31,7 +31,7 @@ DEFAULT_SETTINGS: dict[str, dict[str, Any]] = {
         "memory_limit": 5,
     },
     "personality": {
-        "preset": "amadeus",
+        "preset": "kurisu",
         "mood": "calm",
         "familiarity": 0.4,
         "verbosity": 0.5,
@@ -79,12 +79,15 @@ DEFAULT_SETTINGS: dict[str, dict[str, Any]] = {
         "sample_rate": 16000,
         "language": "ru",
         "auto_send": True,
-        "auto_speak": False,
-        "profile": "default",
-        "length_scale": 1.0,
-        "noise_scale": 0.667,
-        "noise_w": 0.8,
-        "pitch_semitones": 0.0,
+        "auto_speak": True,
+        "profile": "kurisu",
+        "length_scale": 0.92,
+        "noise_scale": 0.75,
+        "noise_w": 0.85,
+        "pitch_semitones": 2.0,
+    },
+    "ui": {
+        "close_to_tray": True,
     },
 }
 
@@ -175,8 +178,15 @@ class Settings:
 
     def ensure_persona(self) -> None:
         if not self.persona_path.exists():
+            from .personality.presets import get_persona
+
+            preset = str(self.get("personality.preset", "amadeus"))
+            try:
+                text = get_persona(preset)
+            except ValueError:
+                text = DEFAULT_PERSONA.strip()
             self.persona_path.parent.mkdir(parents=True, exist_ok=True)
-            self.persona_path.write_text(DEFAULT_PERSONA, encoding="utf-8")
+            self.persona_path.write_text(text + "\n", encoding="utf-8")
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

@@ -20,7 +20,7 @@ history_limit = 20
 memory_limit = 5
 
 [personality]
-preset = "amadeus"
+preset = "kurisu"
 mood = "calm"
 familiarity = 0.4
 verbosity = 0.5
@@ -58,9 +58,12 @@ player_command = ""
 sample_rate = 16000
 language = "ru"
 auto_send = true
-auto_speak = false
-profile = "default"
-length_scale = 1.0
-noise_scale = 0.667
-noise_w = 0.8
-pitch_semitones = 0.0
+auto_speak = true
+profile = "kurisu"
+length_scale = 0.92
+noise_scale = 0.75
+noise_w = 0.85
+pitch_semitones = 2.0
+
+[ui]
+close_to_tray = true

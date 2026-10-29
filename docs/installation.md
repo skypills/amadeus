@@ -125,8 +125,23 @@ install -Dm644 packaging/amadeus-autostart.desktop \
   ~/.config/autostart/amadeus.desktop
 ```
 
+Файл запускает `amadeus-gui --background`: окно скрыто, приложение живёт в трее.
+Горячая клавиша `amadeus-gui --toggle` показывает или скрывает его.
+
 Отключить автозапуск: удалить `~/.config/autostart/amadeus.desktop`.
 В Hyprland аналог — `exec-once = amadeus-gui` в `hyprland.conf`.
+
+## 6.1. Фоновый режим
+
+```bash
+amadeus-gui --background   # скрытый запуск
+amadeus-gui --toggle       # показать/скрыть
+```
+
+Второй экземпляр не создаётся: `--toggle` общается с уже запущенным процессом.
+Закрытие окна сворачивает в трей, если доступен `QSystemTrayIcon`; иначе
+приложение завершается. Постоянного прослушивания микрофона нет — запись
+запускается явно.
 
 ## 7. Диагностика и benchmark
 
@@ -153,7 +168,7 @@ amadeus --benchmark --benchmark-out ~/amadeus-bench.json
 
 ```bash
 python -m build
-pip install dist/amadeus-1.1.0-py3-none-any.whl
+pip install dist/amadeus-1.2.0-py3-none-any.whl
 ```
 
 Arch/CachyOS:

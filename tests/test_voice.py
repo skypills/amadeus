@@ -164,6 +164,9 @@ def test_voice_pipeline_records_transcribes_and_speaks(tmp_path, settings):
     settings.set("voice.tts_command", tts_script(tmp_path), save=False)
     settings.set("voice.tts_model", model, save=False)
     settings.set("voice.player_command", f"{player_script(tmp_path)} {{input}}", save=False)
+    from amadeus.voice.profiles import apply_voice_profile
+
+    apply_voice_profile(settings, "default", save=False)
     settings.save()
 
     pipeline = VoicePipeline(settings)
