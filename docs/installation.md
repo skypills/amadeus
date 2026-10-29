@@ -32,6 +32,10 @@ amadeus --status
 Для NVIDIA/AMD проверьте варианты пакета (`ollama-cuda`, `ollama-rocm`) и
 убедитесь, что `ollama ps` показывает загрузку на GPU.
 
+Если sudo недоступен, можно распаковать официальный `ollama-linux-amd64.tar.zst`
+в `~/.local/ollama`, поставить бинарник в `~/.local/bin` и запустить
+пользовательский сервис `packaging/ollama-user.service`.
+
 ## 3. Python-окружение
 
 ```bash

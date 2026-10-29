@@ -26,7 +26,7 @@ def send_notification(arguments: dict[str, object]) -> str:
             [executable, "-a", "Amadeus", "--", title, text],
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=5,
             check=False,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:

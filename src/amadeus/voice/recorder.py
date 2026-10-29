@@ -36,10 +36,10 @@ class AudioRecorder:
             if candidate == "parecord":
                 return [
                     executable,
-                    f"--file={path}",
                     "--channels=1",
                     f"--rate={self.sample_rate}",
                     "--format=s16le",
+                    str(path),
                 ]
             if candidate == "pw-record":
                 return [

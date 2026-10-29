@@ -107,6 +107,16 @@ amadeus --status
 amadeus --once "Привет, проверка связи"
 ```
 
+Если Ollama установлена в домашний каталог без sudo, используйте пользовательский
+systemd-сервис из `packaging/ollama-user.service`:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp packaging/ollama-user.service ~/.config/systemd/user/ollama.service
+systemctl --user daemon-reload
+systemctl --user enable --now ollama.service
+```
+
 ## Разработка, упаковка и CI
 
 ```bash
@@ -146,6 +156,7 @@ amadeus --benchmark --benchmark-out ~/amadeus-bench.json
 
 - Подробная установка: `docs/installation.md`
 - Диагностика и выбор модели: `docs/benchmark.md`
+- Результаты реальной проверки: `docs/verification.md`
 - Автозапуск GUI: `packaging/amadeus-autostart.desktop`
 - Логи: `~/.local/state/amadeus/amadeus.log`
 

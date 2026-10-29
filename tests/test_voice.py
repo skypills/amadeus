@@ -115,6 +115,18 @@ def test_piper_tts_with_fake_binary(tmp_path):
     assert tts.status()[0]
 
 
+def test_parecord_command_uses_positional_file(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        "amadeus.voice.recorder.shutil.which",
+        lambda name: "/usr/bin/parecord" if name == "parecord" else None,
+    )
+    recorder = AudioRecorder()
+    command = recorder._command_for(tmp_path / "rec.wav")
+    assert "--file" not in " ".join(command)
+    assert command[-1] == str(tmp_path / "rec.wav")
+    assert "--format=s16le" in command
+
+
 def test_audio_recorder_start_finish_cancel(tmp_path):
     script = recorder_script(tmp_path)
     recorder = AudioRecorder(command=f"{script} {{output}}")
